@@ -24,6 +24,8 @@
 17. [Referencia de Eventos (Callbacks)](#17-referencia-de-eventos)
 18. [Guia de Impacto de Alteracoes](#18-guia-de-impacto-de-alteracoes)
 19. [Sistema de Flags (flags.py)](#19-sistema-de-flags)
+20. [Homonimos (Resolucao de Ambiguidades)](#20-homonimos)
+21. [Deployment (Heroku / Producao)](#21-deployment)
 
 ---
 
@@ -62,14 +64,17 @@ python pipeline.py --processos 123 456 # Busca processos especificos
 ### Passo a passo pela interface web
 
 1. **Upload** (`/upload`) - Suba a planilha Excel com os devedores. O sistema valida as colunas e mostra preview.
-2. **Configuracao** (`/config`) - Revise limites de busca, tipos de busca (documento/nome/filiais), workers, etc.
-3. **Pipeline** (`/pipeline`) - Selecione as etapas (S1, S2, S3) e clique "Executar Pipeline". Acompanhe o progresso em tempo real.
-4. **Resultados** - Explore os dados nas telas:
-   - `/individuos` - Cada pessoa/empresa coletada
-   - `/processos` - Tabela completa com filtro, sort, export Excel/CSV
+2. **Configuracao** (`/config`) - Revise limites de busca, tipos de busca (documento/nome/filiais), workers, etc. Alteracoes sao salvas automaticamente.
+3. **Pipeline S1** (`/pipeline`) - Selecione S1 e clique "Executar Pipeline". Acompanhe o progresso em tempo real no Kanban animado. Voce pode navegar para outras paginas e o progresso continua no sidebar.
+4. **Homonimos** (`/homonimos`) - **Importante se busca por nome esta habilitada.** Quando nomes retornam multiplos documentos (CPFs/CNPJs), o analista seleciona quais sao do devedor correto. Individuos nao resolvidos serao pulados no S2.
+5. **Pipeline S2+S3** (`/pipeline`) - Execute S2 e S3 para consolidar processos e gerar a visao devedor.
+6. **Resultados** - Explore os dados nas telas:
+   - `/individuos` - Cada pessoa/empresa coletada (com status de homonimos)
+   - `/processos` - Tabela completa com paginacao server-side, filtro, sort, export
    - `/devedores` - Visao agregada por entidade com graficos
    - `/arquivos` - Navegador de pastas e arquivos gerados
-5. **Ajuda** (`/ajuda`) - Guia detalhado com FAQ e referencia de flags
+7. **Download** - Apos pipeline concluido, baixe o ZIP com todos os resultados (especialmente importante no Heroku, onde dados sao efemeros).
+8. **Ajuda** (`/ajuda`) - Guia detalhado com FAQ e referencia de flags
 
 ### Formato da planilha de entrada
 
@@ -107,78 +112,147 @@ python pipeline.py --processos 123 456 # Busca processos especificos
 devedor360-v2/
   web_app.py              # Entry point: uvicorn web_app:app
   flags.py                # Registry de flags extensivel
+  Procfile                # Heroku: web: uvicorn web_app:app --host 0.0.0.0 --port $PORT
+  runtime.txt             # Heroku: python-3.12.8
+  .env.example            # Template de configuracao (copiar para .env)
   web/
     __init__.py            # Cria FastAPI app, monta routers
-    state.py               # RunInfo + AppState (estado em memoria)
+    state.py               # RunInfo + AppState (eventos em lista append-only para SSE replay)
     routes/
-      pages.py             # Rotas de paginas HTML
-      api_config.py        # GET/POST /api/config
-      api_pipeline.py      # POST /api/executar, GET /api/status/stream (SSE)
-      api_data.py          # Upload, dados, docs, arquivos
+      pages.py             # Rotas de paginas HTML (10 paginas)
+      api_config.py        # GET/POST /api/config (auto-save)
+      api_pipeline.py      # POST /api/executar, GET /api/status/stream (SSE index-based)
+      api_data.py          # Upload, dados, homonimos, docs, arquivos, ZIP, ping
     templates/
-      base.html            # Layout + sidebar + CDN imports
+      base.html            # Layout + sidebar + CDN imports + placeholder pipeline status
       pages/
-        dashboard.html     # KPIs + graficos + historico
+        dashboard.html     # KPIs + graficos + historico + alerta homonimos + aviso Heroku
         upload.html        # Upload + validacao + preview Tabulator
-        config.html        # Todos os parametros editaveis
-        pipeline.html      # Kanban visual + SSE log
-        individuos.html    # Tabela S1 com filtro/sort/export
-        processos.html     # Tabela S2 com filtro/sort/export
-        devedores.html     # Tabela S3 + chart top 10
+        config.html        # Parametros editaveis com auto-save (debounce 800ms)
+        pipeline.html      # Kanban animado + SSE resiliente + timer + ZIP download
+        individuos.html    # Tabela S1 com coluna de homonimos
+        homonimos.html     # Resolucao de ambiguidades por nome (cards expandiveis)
+        processos.html     # Tabela S2 com paginacao server-side remota
+        devedores.html     # Tabela S3 com paginacao server-side + chart top 10
         arquivos.html      # File browser navegavel
         ajuda.html         # Guia de uso + FAQ
     static/
-      app.css              # Overrides Tabulator dark + custom
-      app.js               # Helpers globais (formatters, toast)
+      app.css              # Overrides Tabulator dark + animacoes Kanban (glow, flash, stripes, pulse, pop)
+      app.js               # Pipeline status sidebar + keep-alive Heroku + helpers
 ```
 
 ### Paginas
 
 | Pagina | URL | Descricao |
 |--------|-----|-----------|
-| Dashboard | `/` | KPIs, graficos de origens/classificacao, historico |
+| Dashboard | `/` | KPIs, graficos de origens/classificacao, historico, alerta de homonimos pendentes |
 | Upload | `/upload` | Upload de planilha, validacao de colunas, preview editavel |
-| Configuracao | `/config` | Todos os parametros do `.env` editaveis, flags listadas |
-| Pipeline | `/pipeline` | Selecao de steps, Kanban visual, progresso SSE, log |
-| Individuos | `/individuos` | Tabela de individuos com modal de detalhes |
-| Processos | `/processos` | Tabela S2 com filtro, sort, export Excel/CSV |
-| Devedores | `/devedores` | Visao devedor S3 com chart top 10, export |
-| Arquivos | `/arquivos` | File browser das pastas de output |
+| Configuracao | `/config` | Todos os parametros do `.env` editaveis com **auto-save** (sem botao salvar), flags listadas |
+| Pipeline | `/pipeline` | Selecao de steps, **Kanban visual animado** com metricas live, progresso SSE resiliente, log colorido, timer, download ZIP |
+| Individuos | `/individuos` | Tabela de individuos com modal de detalhes e coluna de status de homonimos |
+| **Homonimos** | `/homonimos` | **Resolucao de ambiguidades por nome** - analista seleciona quais documentos sao do devedor correto |
+| Processos | `/processos` | Tabela S2 com **paginacao server-side**, filtro, sort, export Excel/CSV |
+| Devedores | `/devedores` | Visao devedor S3 com **paginacao server-side**, chart top 10, export |
+| Arquivos | `/arquivos` | File browser navegavel |
 | Ajuda | `/ajuda` | Passo a passo, formato planilha, FAQ |
 
 ### Endpoints da API
 
+**Configuracao:**
+
 | Metodo | Endpoint | Descricao |
 |--------|----------|-----------|
 | GET | `/api/config` | Retorna configuracao atual (tokens mascarados) |
-| POST | `/api/config` | Atualiza `.env` com novos valores |
+| POST | `/api/config` | Atualiza `.env` com novos valores (chamado pelo auto-save do frontend) |
 | GET | `/api/config/validate` | Valida config e retorna erros |
-| POST | `/api/upload` | Recebe Excel, valida, salva, retorna preview |
-| GET | `/api/upload/preview` | Preview da planilha de entrada atual |
-| POST | `/api/executar` | Inicia pipeline em background |
-| GET | `/api/status` | Status atual do pipeline |
-| GET | `/api/status/stream` | SSE com eventos em tempo real |
+
+**Upload:**
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| POST | `/api/upload` | Recebe Excel (.xls/.xlsx), valida, normaliza para .xlsx, retorna preview |
+| GET | `/api/upload/preview` | Preview da planilha de entrada atual (tenta openpyxl, fallback xlrd) |
+
+**Pipeline:**
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| POST | `/api/executar` | Inicia pipeline em background thread |
+| GET | `/api/status` | Status atual do pipeline (running, idle, etc.) |
+| GET | `/api/status/stream?since=N` | **SSE com index-based replay** - reconecta sem perder eventos |
 | GET | `/api/history` | Historico de execucoes |
-| GET | `/api/stats` | Estatisticas gerais (dashboard) |
-| GET | `/api/individuos` | Lista individuos processados |
+
+**Dados:**
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| GET | `/api/stats` | Estatisticas gerais (dashboard) + contagem de homonimos pendentes |
+| GET | `/api/individuos` | Lista individuos processados (inclui status de homonimos) |
 | GET | `/api/individuos/{id}` | Detalhes de um individuo |
-| GET | `/api/processos` | Dados S2 como JSON (Tabulator) |
-| GET | `/api/devedores` | Dados S3 como JSON (Tabulator) |
+| GET | `/api/processos/meta` | Metadados da tabela S2 (colunas, total) - sem dados |
+| GET | `/api/processos/filter?page=&size=&sort=&dir=&q=` | **Paginacao server-side** para Tabulator remoto |
+| GET | `/api/devedores/meta` | Metadados da tabela S3 (colunas, total) - sem dados |
+| GET | `/api/devedores/filter?page=&size=&sort=&dir=&q=` | **Paginacao server-side** para Tabulator remoto |
 | GET | `/api/arquivos?path=` | Lista/le diretorio ou arquivo |
 | GET | `/api/arquivos/download?path=` | Download de arquivo |
 | GET | `/api/docs` | Documentacao tecnica renderizada em HTML |
 
+**Homonimos:**
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| GET | `/api/homonimos` | Lista individuos com homonimos (pendentes, resolvidos, unicos) |
+| GET | `/api/homonimos/{id}` | Detalhe completo dos homonimos de um individuo |
+| POST | `/api/homonimos/{id}/resolver` | Analista marca documentos corretos `{selecoes: {doc: true/false}}` |
+| POST | `/api/homonimos/{id}/resetar` | Volta resolucao para "pendente" |
+
+**Utilidades / Heroku:**
+
+| Metodo | Endpoint | Descricao |
+|--------|----------|-----------|
+| GET | `/api/download-zip` | Stream ZIP com todos os outputs (dados, Excels, caches) |
+| GET | `/api/download-zip/info` | Info do ZIP (qtd arquivos, tamanho total) |
+| GET | `/api/ping` | Health check - usado pelo keep-alive do frontend |
+
 ### Tabelas interativas
 
-Todas as tabelas de dados usam **Tabulator** e oferecem:
+Todas as tabelas de dados usam **Tabulator 6.2** e oferecem:
 - Filtro por coluna (campo no cabecalho de cada coluna)
 - Ordenacao crescente/decrescente (clique no titulo)
-- Paginacao automatica
+- **Paginacao server-side** (processos e devedores) com seletor de tamanho de pagina
 - Export Excel (.xlsx) com dados filtrados
 - Export CSV com dados filtrados
 - Botao "Baixar Original" para o arquivo gerado pelo pipeline
 - Colunas arrastáveis e redimensionaveis
+- **Tooltips** no header e celulas (texto completo ao passar o mouse)
 - Formatacao automatica de moeda (BRL) e flags
+
+**Paginacao server-side (processos e devedores):**
+- O frontend faz `fetch` para `/api/processos/filter` ou `/api/devedores/filter` com `page`, `size`, `sort`, `dir`, `q` (JSON de filtros)
+- O backend usa `_DFCache` (cache thread-safe de DataFrames lidos de Excel, invalida por mtime) e `_paginate_df` (filtro case-insensitive, sort com deteccao automatica de tipo numerico, paginacao)
+- Retorna `{ last_page, data, total, total_filtered }` no formato esperado pelo Tabulator remoto
+
+### Features de UX especiais
+
+**Auto-save na configuracao:** Toda alteracao (input text, checkbox, textarea) e salva automaticamente apos 800ms de debounce (1500ms para textarea de tokens). Indicador visual de status (salvando/salvo/erro) no header da pagina.
+
+**Pipeline Kanban animado:** Cards S1/S2/S3 com:
+- Barra de progresso animada (progress-stripes CSS)
+- Metricas live (processos, detalhes, paginas) com animacao `num-pop`
+- Nome do individuo sendo processado (pulsando)
+- Efeito glow no card em execucao, flash ao completar
+- Timer global (elapsed time) atualizado a cada segundo
+- Banner "Pipeline Concluido" com metricas agregadas e botao ZIP
+- Log de eventos colorido com dots e filtro de detalhes
+
+**SSE resiliente (index-based):**
+- Eventos do pipeline sao armazenados em lista append-only no `AppState` (nao mais em queue)
+- O frontend conecta via `EventSource` a `/api/status/stream?since=N`
+- A cada evento recebido, atualiza `sseIndex` com `evt._idx`
+- Se a conexao cai, reconecta automaticamente enviando o ultimo indice — sem perder eventos
+- O sidebar mostra status global do pipeline em todas as paginas (polling a cada 3s)
+
+**Homonimos:** Ver [secao 20](#20-homonimos) para detalhes completos.
 
 ---
 
@@ -693,9 +767,16 @@ def buscar_por_nome(self, nome, max_paginas=100, max_processos=1000,
                      save_dir=None, callback=None) -> dict
 ```
 
-Faz **2 buscas separadas** e mergeia:
+Faz **2 buscas separadas** e mergeia (replicando o comportamento do `s1-nomes-recife.py` original):
 1. Parametro `nomeParte` → salva em `{save_dir}/nomeParte/page_N.json`
 2. Parametro `outroNomeParte` → salva em `{save_dir}/outroNomeParte/page_N.json`
+
+**Parametros da API (por busca):**
+- `nomeParte` ou `outroNomeParte`: nome buscado
+- `tribunal`: sigla do tribunal configurado (ex: `TJPE`)
+- `idClasse`: classe configurada (ex: `1116` para Execucao Fiscal) — aplicado se configurado
+- `tamanhoPagina`: max resultados por pagina
+- `searchAfter`: cursor de paginacao
 
 **Merge:** usa dict `{numeroProcesso: item}` para deduplicar (primeiro encontrado prevalece).
 
@@ -805,9 +886,13 @@ class ColetaUnificada:
      - Adiciona ao pool com origem "por_filial:{cnpj}"
 
 5. BUSCA POR NOME (se habilitada e nome nao vazio)
-   - Chama api.buscar_por_nome()
-   - Extrai documentos dos processos encontrados
+   - Chama api.buscar_por_nome() (faz nomeParte + outroNomeParte + merge)
+   - Extrai documentos (CPF/CNPJ) dos processos encontrados via extrair_documentos_dos_processos()
    - Adiciona ao pool com origem "por_nome"
+   - **HOMONIMOS:** Salva homonimos.json com:
+     - Cada documento encontrado: tipo, nomes das partes, qtd processos, amostra
+     - Status: "unico" (1 doc) ou "pendente" (multiplos docs, precisa resolver)
+     - Se multiplos docs: analista deve resolver na aba /homonimos antes do S2
 
 6. PRIORIZACAO
    - Separa pool em: exec_fiscal, polo_ativo, outros
@@ -825,6 +910,7 @@ class ColetaUnificada:
 
 9. METADATA.JSON
    - Salva id, nome, documento, tipo, buscas (resultado de cada busca), priorizacao, timestamp
+   - Inclui flag `homonimos_pendentes: true/false` se existem homonimos nao resolvidos
 ```
 
 ### 8.5 Limites (_aplicar_limites)
@@ -897,15 +983,22 @@ class OrganizadorProcessos:
    - Fallback: qualquer subpasta
 2. Limpa pastas vazias
 3. Para cada individuo:
-   a. Le metadata.json (id, nome, documento, tipo_documento)
-   b. Le processos_unicos.json (origens por processo)
-   c. Se pasta detalhes/ existe:
+   a. **VERIFICA HOMONIMOS (_resolver_homonimos)**:
+      - Se nao existe homonimos.json → processa tudo normalmente
+      - Se existe com status "unico" (1 doc) → processa tudo
+      - Se existe com status "pendente" (multiplos docs, nao resolvido) → PULA individuo
+      - Se existe com status "resolvido" → filtra apenas processos dos documentos selecionados
+   b. Le metadata.json (id, nome, documento, tipo_documento)
+   c. Le processos_unicos.json (origens por processo)
+   d. Se pasta detalhes/ existe:
       - Para cada .json em detalhes/:
+        - Se homonimos resolvidos: skip se processo nao esta nos permitidos
         - extrair_campos_processo() → lista de records
         - Adiciona ID Individuo, Nome Cliente, Origens
-   d. Senao (fallback pages):
+   e. Senao (fallback pages):
       - Coleta page_*.json recursivamente
       - Para cada item em content:
+        - Se homonimos resolvidos: skip se processo nao esta nos permitidos
         - extrair_campos_pagina() → record
         - Adiciona ID Individuo, Nome Cliente, Origens
 4. Monta DataFrame
@@ -915,6 +1008,21 @@ class OrganizadorProcessos:
 8. Salva saida_processos_consolidados_{timestamp}.xlsx
 9. Salva caches (SELIC)
 ```
+
+### 9.3.1 _resolver_homonimos (novo)
+
+```python
+@staticmethod
+def _resolver_homonimos(ind_dir: str) -> set | None
+```
+
+| Retorno | Significado | Acao no S2 |
+|---------|-------------|-----------|
+| `None` | Sem homonimos.json | Processa tudo normalmente |
+| `set()` (vazio) | Homonimos pendentes | **Pula individuo** |
+| `set({...})` | Homonimos resolvidos | Filtra por processos dos docs selecionados |
+
+Le `homonimos.json`, itera os documentos com `selecionado: true`, e retorna o conjunto de numeros de processo desses documentos.
 
 ### 9.4 Deduplicacao (3 Etapas)
 
@@ -1095,8 +1203,9 @@ python pipeline.py --debug                  # modo verboso
 ```
 outputs/
 ├── 000001/                              # ID do individuo (posicao padleft 6)
-│   ├── metadata.json                    # Metadados: id, nome, doc, buscas, priorizacao
+│   ├── metadata.json                    # Metadados: id, nome, doc, buscas, priorizacao, homonimos_pendentes
 │   ├── processos_unicos.json            # {numero: {origens, prioridade, detalhe_baixado}}
+│   ├── homonimos.json                   # Mapeamento documento→processos (se busca por nome habilitada)
 │   ├── por_documento/
 │   │   └── pages/
 │   │       ├── page_1.json              # Resposta paginada da API
@@ -1126,6 +1235,7 @@ outputs/
   "id": "000001",
   "nome": "EMPRESA EXEMPLO LTDA",
   "documento": "12345678000199",
+  "documento_normalizado": "12345678000199",
   "tipo_documento": "CNPJ",
   "buscas": {
     "por_documento": {
@@ -1139,16 +1249,76 @@ outputs/
     "por_nome": {
       "total": 30,
       "origens_api": {"nomeParte": 20, "outroNomeParte": 15},
-      "documentos_encontrados": ["12345678000199", "98765432100"]
+      "documentos_encontrados": ["12345678000199", "98765432100"],
+      "homonimos": true
     }
   },
   "total_processos_unicos": 60,
   "priorizacao": {"exec_fiscal": 10, "polo_ativo": 5, "outros": 45},
+  "homonimos_pendentes": true,
   "timestamp": "2026-02-12T14:30:00.000000"
 }
 ```
 
-### 12.3 processos_unicos.json
+### 12.3 homonimos.json (novo)
+
+Gerado pelo S1 quando a busca por nome encontra processos. Essencial para resolver ambiguidades antes do S2.
+
+```json
+{
+  "nome_busca": "JOAO DA SILVA",
+  "total_documentos": 3,
+  "total_processos_nome": 85,
+  "status": "pendente",
+  "documentos": {
+    "12345678909": {
+      "documento": "12345678909",
+      "tipo": "CPF",
+      "nomes": ["JOAO DA SILVA", "JOAO DA SILVA ME"],
+      "qtd_processos": 45,
+      "processos": ["0001234-56.2020.8.17.0001", "0005678-90.2019.8.17.0002"],
+      "selecionado": null
+    },
+    "98765432100": {
+      "documento": "98765432100",
+      "tipo": "CPF",
+      "nomes": ["JOAO DA SILVA JUNIOR"],
+      "qtd_processos": 30,
+      "processos": ["0009999-88.2021.8.17.0003"],
+      "selecionado": null
+    },
+    "11222333000144": {
+      "documento": "11222333000144",
+      "tipo": "CNPJ",
+      "nomes": ["JOAO DA SILVA COMERCIO LTDA"],
+      "qtd_processos": 10,
+      "processos": ["0007777-11.2022.8.17.0004"],
+      "selecionado": null
+    }
+  }
+}
+```
+
+**Campos do status:**
+
+| Status | Significado | Acao no S2 |
+|--------|-------------|-----------|
+| `"unico"` | Apenas 1 documento encontrado | Processa tudo normalmente |
+| `"pendente"` | Multiplos documentos, nao resolvido | **Pula individuo** |
+| `"resolvido"` | Analista selecionou documentos corretos | Filtra processos dos selecionados |
+
+**Campos de `selecionado`:**
+
+| Valor | Significado |
+|-------|-------------|
+| `null` | Nao resolvido ainda |
+| `true` | Este documento e do devedor correto |
+| `false` | Este documento nao e do devedor |
+
+Apos resolucao, `status` muda para `"resolvido"` e `resolvido_em` e adicionado com timestamp.
+```
+
+### 12.4 processos_unicos.json
 
 ```json
 {
@@ -1180,8 +1350,8 @@ outputs/
 | Metodo | Path | Parametros | Uso |
 |--------|------|-----------|-----|
 | GET | `/` | `cpfCnpjParte`, `siglaTribunal`, `tamanhoPagina`, `idClasse`, `searchAfter` | Busca por documento |
-| GET | `/` | `nomeParte`, `siglaTribunal`, `tamanhoPagina`, `searchAfter` | Busca por nome (campo 1) |
-| GET | `/` | `outroNomeParte`, `siglaTribunal`, `tamanhoPagina`, `searchAfter` | Busca por nome (campo 2) |
+| GET | `/` | `nomeParte`, `tribunal`, `idClasse`, `tamanhoPagina`, `searchAfter` | Busca por nome (campo 1) |
+| GET | `/` | `outroNomeParte`, `tribunal`, `idClasse`, `tamanhoPagina`, `searchAfter` | Busca por nome (campo 2) |
 | GET | `/{numeroProcesso}` | - | Detalhe individual |
 
 **Resposta paginada:**
@@ -1333,6 +1503,7 @@ async def pipeline_ws(ws: WebSocket):
 |--------|------|--------|
 | `s2_inicio` | `{"total": N}` | Inicio do processamento |
 | `s2_progresso` | `{"i": 5, "total": 100, "records": 250}` | Apos cada individuo |
+| `s2_homonimo_pendente` | `{"id": "000001", "nome": "..."}` | Individuo pulado por homonimos nao resolvidos |
 | `s2_fim` | `{"arquivo": "...", "total": N, "stats": {...}}` | Fim |
 
 ### 15.3 Step 3 (VisaoDevedor)
@@ -1431,6 +1602,24 @@ async def pipeline_ws(ws: WebSocket):
 |---------|-------|------|
 | `s3_visao_devedor.py` | `_salvar_excel()` | Alterar estilos openpyxl |
 
+### Alterar logica de resolucao de homonimos
+
+| Arquivo | Local | Acao |
+|---------|-------|------|
+| `s1_coleta_unificada.py` | `_busca_nome()` | Alterar como documentos sao extraidos/agrupados |
+| `s2_organiza_processos.py` | `_resolver_homonimos()` | Alterar logica de filtragem |
+| `web/routes/api_data.py` | Endpoints `/api/homonimos/*` | Alterar API de resolucao |
+| `web/templates/pages/homonimos.html` | Frontend | Alterar UI de selecao |
+
+### Adicionar nova pagina no frontend
+
+| Arquivo | Local | Acao |
+|---------|-------|------|
+| `web/routes/pages.py` | Nova rota `@router.get("/nova")` | Adicionar rota da pagina |
+| `web/templates/pages/nova.html` | Novo template | Criar pagina (estende `base.html`) |
+| `web/templates/base.html` | Sidebar | Adicionar link de navegacao |
+| `web/routes/api_data.py` | (se novo endpoint) | Adicionar API de dados |
+
 ---
 
 ## 19. Sistema de Flags (flags.py)
@@ -1458,4 +1647,136 @@ Funcoes auxiliares disponiveis em `flags.py`:
 
 ---
 
-*Documento gerado em 12/02/2026. Atualizado com frontend web e guia de uso.*
+## 20. Homonimos
+
+### 20.1 O Problema
+
+Quando buscamos processos por **nome** (nomeParte + outroNomeParte), a API PDPJ retorna todos os processos de qualquer pessoa que tenha aquele nome. Se "JOAO DA SILVA" retorna processos de 3 CPFs diferentes (homonimos), precisamos que o analista indique qual e o devedor correto antes de consolidar os dados.
+
+### 20.2 Fluxo Completo
+
+```
+S1 (Coleta)                      Frontend                        S2 (Organizacao)
+                                                                 
+busca por nome ─┐                                               
+nomeParte       ├─> processos ─> extrair_documentos ─>          
+outroNomeParte ─┘                                               
+                                  homonimos.json                 
+                                  {doc1: procs, doc2: procs}     
+                                        │                        
+                                        ▼                        
+                                  /homonimos (frontend)          
+                                  analista seleciona ─────────>  _resolver_homonimos()
+                                  docs corretos                  filtra processos
+                                        │                        
+                                  POST /api/homonimos/{id}/      
+                                  resolver                       
+                                        │                        
+                                  homonimos.json                 
+                                  status: "resolvido"            
+                                  selecionado: true/false        
+```
+
+### 20.3 Geracao (S1)
+
+No metodo `_busca_nome()` de `ColetaUnificada`:
+
+1. Apos receber processos da API, chama `extrair_documentos_dos_processos()` que agrupa processos por CPF/CNPJ
+2. Para cada documento encontrado, extrai:
+   - Tipo (CPF/CNPJ)
+   - Nomes das partes associadas (de `tramitacoes[].partes[].nome`)
+   - Quantidade de processos
+   - Amostra de ate 20 numeros de processo
+3. Salva `homonimos.json` na pasta do individuo
+4. Se mais de 1 documento: status = `"pendente"`, senao: `"unico"`
+
+### 20.4 Resolucao (Frontend)
+
+A pagina `/homonimos` permite o analista:
+
+1. Ver lista de todos os individuos com homonimos (filtro: pendentes/resolvidos/unicos)
+2. Expandir um individuo para ver os documentos candidatos
+3. Para cada documento: ver CPF/CNPJ formatado, tipo, nomes associados, qtd processos
+4. Marcar checkboxes nos documentos que sao do devedor correto
+5. Clicar "Confirmar Selecao" — chama `POST /api/homonimos/{id}/resolver`
+6. Status muda para "resolvido", `selecionado` atualizado para cada documento
+
+**Reset:** O analista pode clicar "Resetar" para voltar ao estado "pendente" (`POST /api/homonimos/{id}/resetar`).
+
+### 20.5 Filtragem (S2)
+
+No metodo `_processar_individuo()` de `OrganizadorProcessos`:
+
+1. Chama `_resolver_homonimos(ind_dir)` que le `homonimos.json`
+2. Se retorna `None` (sem homonimos): processa tudo normalmente
+3. Se retorna `set()` vazio (pendente): **pula o individuo** e emite evento `s2_homonimo_pendente`
+4. Se retorna `set(processos)`: filtra apenas esses processos nos detalhes e pages
+
+### 20.6 Visibilidade
+
+- **Dashboard:** Banner amarelo "N homonimo(s) pendente(s)" com link para `/homonimos`
+- **Individuos:** Coluna "Homonimos" com badge Pendente/Resolvido/OK
+- **Stats API:** Campos `homonimos_pendentes` e `homonimos_resolvidos`
+
+---
+
+## 21. Deployment
+
+### 21.1 Heroku
+
+**Arquivos de configuracao:**
+
+| Arquivo | Conteudo |
+|---------|----------|
+| `Procfile` | `web: uvicorn web_app:app --host 0.0.0.0 --port $PORT` |
+| `runtime.txt` | `python-3.12.8` |
+| `.env.example` | Template com todos os parametros (copiar para `.env`) |
+| `requirements.txt` | Dependencias Python com versoes |
+
+**Deploy:**
+```bash
+heroku create meu-app
+heroku config:set PDPJ_TOKENS=token1,token2
+git push heroku master
+```
+
+### 21.2 Filesystem Efemero
+
+O Heroku reinicia dynos periodicamente e **perde todos os dados em disco**. Para contornar:
+
+1. **Download ZIP:** Endpoint `GET /api/download-zip` gera um ZIP streamado com todos os outputs, Excels e caches. Botao disponivel na pagina Pipeline (apos conclusao) e no Dashboard.
+2. **Keep-alive:** O frontend faz polling de `GET /api/ping` a cada 20s enquanto o pipeline roda, impedindo que o dyno hiberne. Implementado em `app.js` com `startKeepAlive()`/`stopKeepAlive()`.
+3. **Banner de aviso:** Dashboard e Pipeline mostram alertas sobre a perda de dados.
+
+### 21.3 GitHub
+
+O `.gitignore` esta configurado para ignorar:
+- `.env` (tokens reais)
+- `outputs/` (dados baixados)
+- `nomes/` (dados do codigo original)
+- Todos os Excels gerados (`entrada_*.xlsx`, `saida_*.xlsx`, `visao_devedor_*.xlsx`)
+- Caches (`selic_cache.json`, `processos_404.json`, etc.)
+- Arquivos temporarios (`_temp_upload*`)
+- IDE/OS files (`.vscode/`, `.idea/`, `.cursor/`, `Thumbs.db`, etc.)
+
+### 21.4 Variaveis de Ambiente (.env)
+
+Todas as configuracoes sao lidas do `.env`. Ver `.env.example` para o template completo. Principais:
+
+| Variavel | Default | Descricao |
+|----------|---------|-----------|
+| `PDPJ_TOKENS` | (obrigatorio) | Tokens JWT separados por virgula |
+| `PDPJ_BASE_URL` | `https://api-processo-...` | URL base da API PDPJ |
+| `PDPJ_TRIBUNAL` | `TJPE` | Sigla do tribunal |
+| `PDPJ_ID_CLASSE` | `1116` | Classe de processo (vazio = sem filtro) |
+| `INPUT_FILE` | `Recife_nomes_partes_estoque.xlsx` | Planilha de entrada |
+| `OUTPUT_DIR` | `outputs` | Diretorio de saida |
+| `DOWNLOAD_DETALHES` | `false` | Baixar capas individuais dos processos |
+| `ENABLE_BUSCA_DOCUMENTO` | `true` | Buscar por CPF/CNPJ |
+| `ENABLE_BUSCA_NOME` | `true` | Buscar por nomeParte + outroNomeParte |
+| `ENABLE_BUSCA_FILIAL` | `true` | Iterar filiais CNPJ |
+| `DEBUG` | `false` | Modo verboso |
+
+---
+
+*Documento gerado em 12/02/2026. Atualizado com frontend web, homonimos, paginacao server-side, SSE resiliente, Kanban animado e deployment Heroku.*
