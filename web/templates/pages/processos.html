@@ -146,53 +146,53 @@ function processosPage() {
         paginationMode: "remote",
         paginationSize: this.pageSize,
         paginationButtonCount: 7,
-        // --- Sort remoto ---
+        // --- Sort e Filter remotos ---
         sortMode: "remote",
-        // --- Filter remoto ---
         filterMode: "remote",
-        // --- Ajax ---
+        // --- Request customizado (controle total) ---
         ajaxURL: "/api/processos/filter",
-        ajaxURLGenerator: function(url, config, params) {
-          return self._buildURL(params);
-        },
-        ajaxResponse: function(url, params, response) {
-          self.loading = false;
-          self.stats.filtered = response.total_filtered ?? response.total ?? 0;
-          self.stats.total = response.total ?? 0;
-          self.stats.lastPage = response.last_page ?? 1;
-          self.stats.page = params.page ?? 1;
-          return response;
+        ajaxRequestFunc: function(url, config, params) {
+          return self._fetchData(url, params);
         },
       });
 
-      // Loading indicator on data request
       this.table.on("dataLoading", () => { self.loading = true; });
       this.table.on("dataLoaded", () => { self.loading = false; });
     },
 
-    _buildURL(params) {
+    _fetchData(url, params) {
+      const self = this;
       const p = new URLSearchParams();
       p.set('page', params.page || 1);
       p.set('size', params.size || this.pageSize);
 
-      // Sort
-      if (params.sorters && params.sorters.length > 0) {
-        p.set('sort', params.sorters[0].field);
-        p.set('dir', params.sorters[0].dir);
+      // Sort - Tabulator v6 pode enviar como 'sort' ou 'sorters'
+      const sorters = params.sorters || params.sort || [];
+      if (sorters.length > 0) {
+        p.set('sort', sorters[0].field || sorters[0].column);
+        p.set('dir', sorters[0].dir || 'asc');
       }
 
       // Filters
+      const filterArr = params.filter || params.filters || [];
       const filters = {};
-      if (params.filter && params.filter.length > 0) {
-        for (const f of params.filter) {
-          if (f.value) filters[f.field] = f.value;
-        }
+      for (const f of filterArr) {
+        if (f.value) filters[f.field] = f.value;
       }
       if (Object.keys(filters).length > 0) {
         p.set('q', JSON.stringify(filters));
       }
 
-      return '/api/processos/filter?' + p.toString();
+      return fetch('/api/processos/filter?' + p.toString())
+        .then(r => r.json())
+        .then(response => {
+          self.loading = false;
+          self.stats.filtered = response.total_filtered ?? response.total ?? 0;
+          self.stats.total = response.total ?? 0;
+          self.stats.lastPage = response.last_page ?? 1;
+          self.stats.page = parseInt(params.page) || 1;
+          return response;
+        });
     },
 
     reload() {
