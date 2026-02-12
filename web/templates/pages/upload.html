@@ -150,6 +150,7 @@ async function loadPreview() {
     msg.textContent = '';
     const cols = data.columns.map(c => ({
       title: c, field: c, headerFilter: "input", sorter: "string",
+      headerTooltip: true, tooltip: true,
       editor: "input", minWidth: 100,
     }));
     new Tabulator(container, {

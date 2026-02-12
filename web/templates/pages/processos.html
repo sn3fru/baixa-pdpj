@@ -111,7 +111,8 @@ function processosPage() {
       const cols = colNames.map(c => {
         const col = {
           title: c, field: c, headerFilter: "input",
-          headerFilterLiveFilter: false, // Filtra ao apertar Enter, nao a cada tecla
+          headerFilterLiveFilter: false,
+          headerTooltip: true, tooltip: true,
           sorter: "string", minWidth: 100,
         };
         if (['Valor Causa', 'Valor Causa Corrigido'].includes(c)) {

@@ -43,14 +43,14 @@ async function loadIndividuos() {
     msg.textContent = '';
 
     const cols = [
-      {title: "ID", field: "id", headerFilter: "input", sorter: "string", width: 100, frozen: true},
-      {title: "Nome", field: "nome", headerFilter: "input", sorter: "string", minWidth: 180},
-      {title: "Documento", field: "documento_normalizado", headerFilter: "input", sorter: "string", width: 160},
-      {title: "Tipo", field: "tipo_documento", headerFilter: "input", sorter: "string", width: 80},
-      {title: "Processos", field: "total_processos", headerFilter: "number", sorter: "number", width: 100, hozAlign: "right"},
-      {title: "Pages", field: "_pages", headerFilter: "number", sorter: "number", width: 80, hozAlign: "right"},
-      {title: "Detalhes", field: "_detalhes", headerFilter: "number", sorter: "number", width: 90, hozAlign: "right"},
-      {title: "Origens", field: "origens", headerFilter: "input", sorter: "string", width: 140,
+      {title: "ID", field: "id", headerFilter: "input", sorter: "string", width: 100, frozen: true, headerTooltip: true, tooltip: true},
+      {title: "Nome", field: "nome", headerFilter: "input", sorter: "string", minWidth: 180, headerTooltip: true, tooltip: true},
+      {title: "Documento", field: "documento_normalizado", headerFilter: "input", sorter: "string", width: 160, headerTooltip: true, tooltip: true},
+      {title: "Tipo", field: "tipo_documento", headerFilter: "input", sorter: "string", width: 80, headerTooltip: true, tooltip: true},
+      {title: "Processos", field: "total_processos", headerFilter: "number", sorter: "number", width: 100, hozAlign: "right", headerTooltip: true, tooltip: true},
+      {title: "Pages", field: "_pages", headerFilter: "number", sorter: "number", width: 80, hozAlign: "right", headerTooltip: true, tooltip: true},
+      {title: "Detalhes", field: "_detalhes", headerFilter: "number", sorter: "number", width: 90, hozAlign: "right", headerTooltip: true, tooltip: true},
+      {title: "Origens", field: "origens", headerFilter: "input", sorter: "string", width: 140, headerTooltip: true, tooltip: true,
         formatter: function(cell) {
           const v = cell.getValue();
           if (!v || typeof v !== 'object') return String(v || '');
