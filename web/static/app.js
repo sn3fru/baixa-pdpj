@@ -95,6 +95,23 @@ window.D360 = {
 
 (function() {
   let lastRunning = null;
+  let keepAliveInterval = null;
+
+  // Keep-alive: manda ping a cada 20s enquanto pipeline roda
+  // Previne Heroku de hibernar o dyno durante a execucao
+  function startKeepAlive() {
+    if (keepAliveInterval) return;
+    keepAliveInterval = setInterval(() => {
+      fetch('/api/ping').catch(() => {});
+    }, 20000);
+  }
+
+  function stopKeepAlive() {
+    if (keepAliveInterval) {
+      clearInterval(keepAliveInterval);
+      keepAliveInterval = null;
+    }
+  }
 
   async function checkPipelineStatus() {
     const el = document.getElementById('sidebar-pipeline-status');
@@ -105,6 +122,7 @@ window.D360 = {
       const status = await res.json();
 
       if (status.running) {
+        startKeepAlive();
         const evtCount = status.events_total || 0;
         const lastEvt = status.last_event;
         const lastMsg = lastEvt && lastEvt.data ? (lastEvt.data.message || lastEvt.event || '') : '';
@@ -119,20 +137,29 @@ window.D360 = {
           </a>`;
         lastRunning = true;
       } else {
+        stopKeepAlive();
         if (lastRunning === true) {
-          // Pipeline acabou de terminar
+          // Pipeline acabou de terminar - mostra botao de download
           const lr = status.last_run;
           const statusColor = lr && lr.status === 'completed' ? 'emerald' : 'red';
-          const statusText = lr && lr.status === 'completed' ? 'Concluido' : 'Erro';
+          const statusText = lr && lr.status === 'completed' ? 'Concluido!' : 'Erro';
+          const downloadBtn = lr && lr.status === 'completed'
+            ? `<a href="/api/download-zip" class="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs rounded transition">
+                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                 Baixar ZIP
+               </a>`
+            : '';
           el.innerHTML = `
-            <a href="/pipeline" class="block">
-              <div class="flex items-center gap-2">
-                <span class="text-xs font-semibold text-${statusColor}-400">${statusText}</span>
-              </div>
-              <p class="text-xs text-gray-600">Clique para ver detalhes</p>
-            </a>`;
-          // Limpa apos 10s
-          setTimeout(() => { el.innerHTML = ''; }, 10000);
+            <div>
+              <a href="/pipeline" class="block">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-semibold text-${statusColor}-400">${statusText}</span>
+                </div>
+                <p class="text-xs text-gray-600">Ver detalhes</p>
+              </a>
+              ${downloadBtn}
+            </div>`;
+          // Nao limpa automaticamente - usuario precisa ver o botao
         } else if (lastRunning === null) {
           el.innerHTML = '';
         }

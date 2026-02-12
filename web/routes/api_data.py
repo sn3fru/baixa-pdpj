@@ -1,9 +1,11 @@
 """API de dados: upload, individuos, processos, devedores, arquivos."""
 
 import os
+import io
 import json
 import glob
 import shutil
+import zipfile
 import threading
 from datetime import datetime
 
@@ -12,7 +14,7 @@ import html as html_mod
 
 import pandas as pd
 from fastapi import APIRouter, UploadFile, File, Query
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 from config import Config
 
@@ -694,6 +696,120 @@ def _inline(text: str) -> str:
     # Links
     text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2" class="text-blue-400 underline">\1</a>', text)
     return text
+
+
+# ============================================================================
+# Download ZIP de todos os resultados
+# ============================================================================
+
+@router.get("/download-zip")
+async def download_zip():
+    """Gera um ZIP com todos os outputs (JSONs, Excels, pastas de individuos)
+    para download. Streama direto sem salvar em disco.
+
+    Importante para Heroku: filesystem efemero perde dados no restart.
+    Este endpoint permite salvar tudo localmente antes que isso aconteca."""
+    cfg = Config.from_env()
+    output_dir = os.path.abspath(cfg.output_dir)
+
+    if not os.path.isdir(output_dir):
+        return {"error": "Nenhum dado encontrado. Execute o pipeline primeiro."}
+
+    # Coleta também os Excels de resumo na raiz do projeto
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    def _generate_zip():
+        """Generator que streama o ZIP em chunks."""
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            # 1. Toda a pasta outputs/
+            for root, dirs, files in os.walk(output_dir):
+                for fn in files:
+                    full_path = os.path.join(root, fn)
+                    arcname = os.path.join("outputs", os.path.relpath(full_path, output_dir))
+                    arcname = arcname.replace("\\", "/")
+                    try:
+                        zf.write(full_path, arcname)
+                    except Exception:
+                        pass  # Ignora arquivos bloqueados
+
+            # 2. Excels de resumo na raiz (saida_*, visao_devedor_*, entrada_*)
+            for pattern in ["saida_*.xlsx", "visao_devedor_*.xlsx", "entrada_*.xlsx"]:
+                for f in glob.glob(os.path.join(project_root, pattern)):
+                    arcname = os.path.basename(f)
+                    try:
+                        zf.write(f, arcname)
+                    except Exception:
+                        pass
+
+            # 3. Caches uteis
+            for cache_name in ["selic_cache.json", "processos_404.json",
+                               "filiais_inexistentes.json", "log_erros_detalhado.json"]:
+                cache_path = os.path.join(project_root, cache_name)
+                if os.path.isfile(cache_path):
+                    try:
+                        zf.write(cache_path, cache_name)
+                    except Exception:
+                        pass
+
+        buffer.seek(0)
+        yield buffer.read()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"devedor360_resultados_{timestamp}.zip"
+
+    return StreamingResponse(
+        _generate_zip(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/download-zip/info")
+async def download_zip_info():
+    """Retorna informacoes sobre o que seria incluido no ZIP (tamanho, arquivos)."""
+    cfg = Config.from_env()
+    output_dir = os.path.abspath(cfg.output_dir)
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    if not os.path.isdir(output_dir):
+        return {"exists": False, "files": 0, "size_bytes": 0}
+
+    total_files = 0
+    total_size = 0
+
+    for root, dirs, files in os.walk(output_dir):
+        for fn in files:
+            total_files += 1
+            total_size += os.path.getsize(os.path.join(root, fn))
+
+    for pattern in ["saida_*.xlsx", "visao_devedor_*.xlsx", "entrada_*.xlsx"]:
+        for f in glob.glob(os.path.join(project_root, pattern)):
+            total_files += 1
+            total_size += os.path.getsize(f)
+
+    return {
+        "exists": True,
+        "files": total_files,
+        "size_bytes": total_size,
+        "size_mb": round(total_size / 1024 / 1024, 1),
+    }
+
+
+# ============================================================================
+# Keep-alive / Health check (previne hibernacao no Heroku)
+# ============================================================================
+
+@router.get("/ping")
+async def ping():
+    """Health check simples. O frontend faz polling desse endpoint
+    enquanto o pipeline roda para manter o dyno Heroku acordado."""
+    from web.state import app_state
+    return {
+        "status": "ok",
+        "running": app_state.is_running(),
+        "ts": datetime.now().isoformat(),
+    }
 
 
 # ============================================================================

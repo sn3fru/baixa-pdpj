@@ -301,7 +301,7 @@
         <p class="text-sm text-gray-400" x-text="'Tempo total: ' + (pipelineElapsed || '?') + 's'"></p>
       </div>
     </div>
-    <div class="grid grid-cols-4 gap-4">
+    <div class="grid grid-cols-4 gap-4 mb-5">
       <div class="text-center">
         <p class="text-3xl font-bold text-blue-400" x-text="s1.processed"></p>
         <p class="text-xs text-gray-500">Individuos</p>
@@ -317,6 +317,33 @@
       <div class="text-center">
         <p class="text-3xl font-bold text-emerald-400" x-text="s3.entidades"></p>
         <p class="text-xs text-gray-500">Entidades</p>
+      </div>
+    </div>
+
+    <!-- Download ZIP - proeminente -->
+    <div class="border-t border-emerald-800/30 pt-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <svg class="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+          </svg>
+          <p class="text-sm text-yellow-300">
+            <strong>Heroku:</strong> Os dados serao perdidos quando o servidor reiniciar.
+            Faca o download agora!
+          </p>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-gray-500" x-text="zipInfo"></span>
+          <a href="/api/download-zip"
+             class="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold text-sm transition shadow-lg shadow-emerald-600/20">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            Baixar Todos os Resultados (ZIP)
+          </a>
+        </div>
       </div>
     </div>
   </div>
@@ -379,6 +406,7 @@ function pipelinePage() {
     _startTime: null,
     showDetails: false,
     elapsedDisplay: '--',
+    zipInfo: '',
 
     // ====== Estado rico por etapa ======
     s1: {
@@ -528,6 +556,8 @@ function pipelinePage() {
         const m = Math.floor(s / 60);
         const sec = Math.floor(s % 60);
         this.elapsedDisplay = m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+        // Busca info do ZIP
+        this._loadZipInfo();
       }
       if (e === 'pipeline_done') {
         if (!this.pipelineDone) this.pipelineDone = true;
@@ -645,6 +675,16 @@ function pipelinePage() {
         const e = evt.event || '';
         return e !== 'det_ok' && e !== 'det_cache';
       });
+    },
+
+    async _loadZipInfo() {
+      try {
+        const res = await fetch('/api/download-zip/info');
+        const info = await res.json();
+        if (info.exists) {
+          this.zipInfo = `${info.files} arquivos / ${info.size_mb} MB`;
+        }
+      } catch(e) { /* ignore */ }
     },
 
     // ====== Formatters ======

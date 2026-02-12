@@ -4,6 +4,34 @@
 {% block content %}
 <h2 class="text-2xl font-bold mb-6">Dashboard</h2>
 
+<!-- Aviso Heroku: filesystem efemero -->
+<div x-data="{ show: true, hasData: false }" x-init="fetch('/api/download-zip/info').then(r=>r.json()).then(d => hasData = d.exists)" x-show="show"
+     class="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-4 mb-6 flex items-start gap-3">
+  <svg class="w-5 h-5 text-yellow-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+  </svg>
+  <div class="flex-1">
+    <p class="text-sm text-yellow-300 font-semibold">Armazenamento temporario (Heroku)</p>
+    <p class="text-xs text-gray-400 mt-1">
+      Os dados baixados ficam apenas na memoria do servidor. Quando o dyno reiniciar (deploy, hibernacao, ou restart),
+      <strong class="text-yellow-300">todos os resultados serao perdidos</strong>.
+      Apos executar o pipeline, faca o download do ZIP com todos os dados.
+    </p>
+    <div class="flex items-center gap-3 mt-2">
+      <a x-show="hasData" href="/api/download-zip"
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs rounded transition font-medium">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        Baixar ZIP agora
+      </a>
+      <button @click="show = false" class="text-xs text-gray-500 hover:text-gray-400 transition">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <!-- KPI Cards (auto-refresh via HTMX) -->
 <div hx-get="/api/stats" hx-trigger="load, every 15s" hx-swap="innerHTML" id="stats-container">
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
