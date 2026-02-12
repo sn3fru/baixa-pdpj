@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title %}Upload{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-2">Upload de Planilha</h2>
+<p class="text-gray-400 mb-6">Suba a lista de pessoas ou processos para consulta.</p>
+
+<!-- Formato esperado -->
+<div class="bg-gray-900 rounded-lg border border-gray-800 p-5 mb-6">
+  <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Formato Esperado da Planilha</h3>
+  <div class="overflow-x-auto">
+    <table class="text-sm w-full">
+      <thead>
+        <tr class="text-gray-500 border-b border-gray-700">
+          <th class="text-left py-2 px-3">Coluna</th>
+          <th class="text-left py-2 px-3">Obrigatorio</th>
+          <th class="text-left py-2 px-3">Descricao</th>
+          <th class="text-left py-2 px-3">Exemplo</th>
+        </tr>
+      </thead>
+      <tbody class="text-gray-300">
+        <tr class="border-b border-gray-800/50">
+          <td class="py-2 px-3 font-mono text-blue-400">nr_documento</td>
+          <td class="py-2 px-3"><span class="text-yellow-400">Sim*</span></td>
+          <td class="py-2 px-3">CPF (11 digitos) ou CNPJ (14 digitos), so numeros</td>
+          <td class="py-2 px-3 font-mono text-xs">12345678909</td>
+        </tr>
+        <tr class="border-b border-gray-800/50">
+          <td class="py-2 px-3 font-mono text-blue-400">nome_estoque</td>
+          <td class="py-2 px-3"><span class="text-yellow-400">Sim*</span></td>
+          <td class="py-2 px-3">Nome da pessoa / empresa (para busca por nome)</td>
+          <td class="py-2 px-3 font-mono text-xs">JOAO DA SILVA</td>
+        </tr>
+        <tr class="border-b border-gray-800/50">
+          <td class="py-2 px-3 font-mono text-blue-400">posicao</td>
+          <td class="py-2 px-3"><span class="text-gray-500">Nao</span></td>
+          <td class="py-2 px-3">ID/ranking (auto-gerado se ausente)</td>
+          <td class="py-2 px-3 font-mono text-xs">1</td>
+        </tr>
+        <tr>
+          <td class="py-2 px-3 font-mono text-blue-400">tp_documento</td>
+          <td class="py-2 px-3"><span class="text-gray-500">Nao</span></td>
+          <td class="py-2 px-3">CPF ou CNPJ (auto-detectado se ausente)</td>
+          <td class="py-2 px-3 font-mono text-xs">CPF</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="text-xs text-gray-500 mt-3">
+    * Pelo menos <strong>nr_documento</strong> ou <strong>nome_estoque</strong> deve estar presente.
+    Aliases aceitos: <code class="text-gray-400">documento</code>, <code class="text-gray-400">cpf</code>,
+    <code class="text-gray-400">cnpj</code>, <code class="text-gray-400">cpf_cnpj</code>,
+    <code class="text-gray-400">nome</code>, <code class="text-gray-400">nome_parte</code>.
+    Formatos aceitos: <code class="text-gray-400">.xlsx</code>, <code class="text-gray-400">.xls</code>
+  </p>
+</div>
+
+<!-- Upload area -->
+<div class="bg-gray-900 rounded-lg border border-gray-800 p-5 mb-6" x-data="uploadHandler()">
+  <div class="border-2 border-dashed border-gray-700 rounded-lg p-10 text-center transition hover:border-blue-500"
+       @dragover.prevent="dragging=true" @dragleave="dragging=false"
+       @drop.prevent="handleDrop($event)" :class="dragging && 'border-blue-500 bg-blue-500/5'">
+    <input type="file" accept=".xlsx,.xls" @change="handleFile($event)" class="hidden" id="file-input">
+    <label for="file-input" class="cursor-pointer">
+      <p class="text-4xl text-gray-600 mb-3">&#128196;</p>
+      <p class="text-gray-400">Arraste a planilha aqui ou <span class="text-blue-400 underline">clique para selecionar</span></p>
+      <p class="text-xs text-gray-600 mt-2">Formatos: .xlsx, .xls</p>
+    </label>
+  </div>
+
+  <!-- Status -->
+  <template x-if="uploading">
+    <div class="mt-4 flex items-center gap-3">
+      <div class="animate-spin h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
+      <span class="text-gray-400">Enviando e validando...</span>
+    </div>
+  </template>
+
+  <template x-if="error">
+    <div class="mt-4 bg-red-900/30 border border-red-800 rounded-lg p-3 text-red-400 text-sm" x-text="error"></div>
+  </template>
+
+  <template x-if="result">
+    <div class="mt-4">
+      <div class="flex items-center gap-4 mb-3">
+        <span class="px-2 py-0.5 rounded-full bg-emerald-900/50 text-emerald-400 text-xs">OK</span>
+        <span class="text-gray-300 text-sm" x-text="result.filename + ' (' + result.rows + ' linhas)'"></span>
+      </div>
+      <template x-if="result.issues && result.issues.length > 0">
+        <div class="bg-yellow-900/30 border border-yellow-800 rounded-lg p-3 mb-3">
+          <template x-for="issue in result.issues">
+            <p class="text-yellow-400 text-sm" x-text="issue"></p>
+          </template>
+        </div>
+      </template>
+      <p class="text-xs text-gray-500 mb-3">Colunas: <span class="text-gray-400" x-text="(result.columns||[]).join(', ')"></span></p>
+    </div>
+  </template>
+</div>
+
+<!-- Preview da planilha atual (se existir) -->
+<div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+  <div class="flex items-center justify-between mb-4">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Preview da Planilha de Entrada</h3>
+    <button onclick="loadPreview()" class="text-xs px-3 py-1 bg-gray-800 text-gray-300 rounded hover:bg-gray-700 transition">
+      Recarregar
+    </button>
+  </div>
+  <div id="preview-table"></div>
+  <p id="preview-msg" class="text-gray-600 text-sm">Carregando preview...</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function uploadHandler() {
+  return {
+    dragging: false, uploading: false, error: null, result: null,
+    async handleFile(evt) {
+      const file = evt.target.files[0];
+      if (file) await this.upload(file);
+    },
+    handleDrop(evt) {
+      this.dragging = false;
+      const file = evt.dataTransfer.files[0];
+      if (file) this.upload(file);
+    },
+    async upload(file) {
+      this.uploading = true; this.error = null; this.result = null;
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      try {
+        const res = await fetch('/api/upload', {method:'POST', body:fd});
+        const data = await res.json();
+        if (data.error) { this.error = data.error; }
+        else { this.result = data; loadPreview(); }
+      } catch(e) { this.error = 'Erro de conexao: ' + e.message; }
+      finally { this.uploading = false; }
+    }
+  };
+}
+
+async function loadPreview() {
+  const msg = document.getElementById('preview-msg');
+  const container = document.getElementById('preview-table');
+  try {
+    const res = await fetch('/api/upload/preview');
+    const data = await res.json();
+    if (data.error) { msg.textContent = data.error; return; }
+    msg.textContent = '';
+    const cols = data.columns.map(c => ({
+      title: c, field: c, headerFilter: "input", sorter: "string",
+      editor: "input", minWidth: 100,
+    }));
+    new Tabulator(container, {
+      data: data.data,
+      columns: cols,
+      layout: "fitDataFill",
+      height: "400px",
+      pagination: true,
+      paginationSize: 30,
+      movableColumns: true,
+      placeholder: "Nenhum dado disponivel",
+    });
+  } catch(e) { msg.textContent = 'Erro ao carregar: ' + e.message; }
+}
+loadPreview();
+</script>
+{% endblock %}

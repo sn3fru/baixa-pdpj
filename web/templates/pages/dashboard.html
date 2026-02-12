@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Dashboard</h2>
+
+<!-- KPI Cards (auto-refresh via HTMX) -->
+<div hx-get="/api/stats" hx-trigger="load, every 15s" hx-swap="innerHTML" id="stats-container">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider">Individuos</p>
+      <p class="text-3xl font-bold text-blue-400 mt-1">-</p>
+    </div>
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider">Processos</p>
+      <p class="text-3xl font-bold text-emerald-400 mt-1">-</p>
+    </div>
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider">Ativos</p>
+      <p class="text-3xl font-bold text-yellow-400 mt-1">-</p>
+    </div>
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider">Devedores</p>
+      <p class="text-3xl font-bold text-purple-400 mt-1">-</p>
+    </div>
+  </div>
+</div>
+
+<!-- Charts -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+  <!-- Venn: origens -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Origens dos Processos</h3>
+    <div id="chart-origens" style="height:300px"></div>
+  </div>
+  <!-- Pie: classificacao -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Classificacao</h3>
+    <div id="chart-classif" style="height:300px"></div>
+  </div>
+</div>
+
+<!-- Historico de execucoes -->
+<div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+  <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Ultimas Execucoes</h3>
+  {% if history %}
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="text-gray-500 border-b border-gray-800">
+        <th class="text-left py-2 px-3">ID</th>
+        <th class="text-left py-2 px-3">Steps</th>
+        <th class="text-left py-2 px-3">Inicio</th>
+        <th class="text-left py-2 px-3">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in history %}
+      <tr class="border-b border-gray-800/50 hover:bg-gray-800/50">
+        <td class="py-2 px-3 font-mono text-xs">{{ run.id }}</td>
+        <td class="py-2 px-3">{{ run.steps | join(", ") }}</td>
+        <td class="py-2 px-3 text-gray-400">{{ run.started[:19] }}</td>
+        <td class="py-2 px-3">
+          {% if run.status == "completed" %}
+            <span class="px-2 py-0.5 rounded-full bg-emerald-900/50 text-emerald-400 text-xs">OK</span>
+          {% elif run.status == "error" %}
+            <span class="px-2 py-0.5 rounded-full bg-red-900/50 text-red-400 text-xs">Erro</span>
+          {% else %}
+            <span class="px-2 py-0.5 rounded-full bg-blue-900/50 text-blue-400 text-xs">{{ run.status }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-gray-600 text-sm">Nenhuma execucao registrada nesta sessao.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Carrega stats e atualiza graficos
+async function loadDashboard() {
+  try {
+    const res = await fetch('/api/stats');
+    const s = await res.json();
+
+    // Atualiza KPI cards
+    const c = document.getElementById('stats-container');
+    if (c) {
+      c.innerHTML = `
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          ${kpiCard('Individuos', s.individuos, 'blue')}
+          ${kpiCard('Processos', s.processos, 'emerald')}
+          ${kpiCard('Ativos', s.ativos, 'yellow')}
+          ${kpiCard('Devedores', s.devedores, 'purple')}
+        </div>`;
+    }
+
+    // Origens chart
+    const chartOri = echarts.init(document.getElementById('chart-origens'), 'dark');
+    chartOri.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {trigger: 'item'},
+      series: [{
+        type: 'pie', radius: ['40%','70%'], center: ['50%','55%'],
+        label: {color: '#9ca3af'},
+        data: [
+          {value: s.origens.por_documento, name: 'Por Documento', itemStyle:{color:'#3b82f6'}},
+          {value: s.origens.por_nome, name: 'Por Nome', itemStyle:{color:'#10b981'}},
+          {value: s.origens.por_filial, name: 'Por Filial', itemStyle:{color:'#f59e0b'}},
+        ]
+      }]
+    });
+
+    // Classificacao chart
+    const chartCls = echarts.init(document.getElementById('chart-classif'), 'dark');
+    chartCls.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {trigger: 'item'},
+      series: [{
+        type: 'pie', radius: ['40%','70%'], center: ['50%','55%'],
+        label: {color: '#9ca3af'},
+        data: [
+          {value: s.exec_fiscal, name: 'Exec. Fiscal', itemStyle:{color:'#eab308'}},
+          {value: s.ativos - s.exec_fiscal, name: 'Outros Ativos', itemStyle:{color:'#3b82f6'}},
+          {value: s.extintos, name: 'Extintos', itemStyle:{color:'#6b7280'}},
+        ]
+      }]
+    });
+
+    window.addEventListener('resize', () => { chartOri.resize(); chartCls.resize(); });
+  } catch(e) { console.warn('Dashboard load:', e); }
+}
+
+function kpiCard(label, value, color) {
+  return `<div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
+    <p class="text-xs text-gray-500 uppercase tracking-wider">${label}</p>
+    <p class="text-3xl font-bold text-${color}-400 mt-1">${(value||0).toLocaleString()}</p>
+  </div>`;
+}
+
+loadDashboard();
+</script>
+{% endblock %}

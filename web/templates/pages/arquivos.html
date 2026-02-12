@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Arquivos{% endblock %}
+
+{% block content %}
+<div x-data="fileBrowser()">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-2xl font-bold">Arquivos</h2>
+      <p class="text-gray-400 text-sm mt-1">Navegue pelos arquivos gerados pelo pipeline</p>
+    </div>
+  </div>
+
+  <!-- Breadcrumb -->
+  <div class="flex items-center gap-1 mb-4 text-sm">
+    <button @click="navigate('')" class="text-blue-400 hover:text-blue-300">&#127968; outputs/</button>
+    <template x-for="(part, i) in breadcrumbs" :key="i">
+      <div class="flex items-center gap-1">
+        <span class="text-gray-600">/</span>
+        <button @click="navigate(part.path)" class="text-blue-400 hover:text-blue-300" x-text="part.name"></button>
+      </div>
+    </template>
+  </div>
+
+  <!-- Conteudo -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+    <template x-if="loading">
+      <div class="flex items-center gap-3 py-8 justify-center">
+        <div class="animate-spin h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
+        <span class="text-gray-400">Carregando...</span>
+      </div>
+    </template>
+
+    <template x-if="error">
+      <p class="text-red-400 text-sm" x-text="error"></p>
+    </template>
+
+    <!-- Diretorio -->
+    <template x-if="!loading && !error && viewType === 'directory'">
+      <div>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-gray-500 border-b border-gray-800">
+              <th class="text-left py-2 px-3">Nome</th>
+              <th class="text-left py-2 px-3 w-24">Tamanho</th>
+              <th class="text-left py-2 px-3 w-24">Itens</th>
+              <th class="w-16"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Botao voltar -->
+            <template x-if="currentPath">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/50 cursor-pointer" @click="goUp()">
+                <td class="py-2 px-3 text-blue-400" colspan="4">&#8592; Voltar</td>
+              </tr>
+            </template>
+            <template x-for="item in items" :key="item.path">
+              <tr class="border-b border-gray-800/50 hover:bg-gray-800/50 cursor-pointer"
+                  @click="item.is_dir ? navigate(item.path) : viewFile(item.path)">
+                <td class="py-2 px-3 flex items-center gap-2">
+                  <span x-text="item.is_dir ? '&#128193;' : (item.name.endsWith('.json') ? '&#128196;' : '&#128462;')"></span>
+                  <span class="text-gray-200" x-text="item.name"></span>
+                </td>
+                <td class="py-2 px-3 text-gray-500 text-xs" x-text="item.is_dir ? '' : formatBytes(item.size)"></td>
+                <td class="py-2 px-3 text-gray-500 text-xs" x-text="item.is_dir ? item.children + ' itens' : ''"></td>
+                <td class="py-2 px-3">
+                  <template x-if="!item.is_dir">
+                    <a :href="'/api/arquivos/download?path=' + encodeURIComponent(item.path)"
+                       @click.stop
+                       class="text-xs text-gray-600 hover:text-gray-400">&#8595;</a>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <template x-if="items.length === 0">
+          <p class="text-gray-600 text-sm py-4 text-center">Diretorio vazio</p>
+        </template>
+      </div>
+    </template>
+
+    <!-- Visualizador JSON -->
+    <template x-if="!loading && !error && viewType === 'json'">
+      <div>
+        <div class="flex items-center justify-between mb-3">
+          <button @click="navigate(parentPath(currentPath))" class="text-xs text-blue-400 hover:text-blue-300">&#8592; Voltar</button>
+          <a :href="'/api/arquivos/download?path=' + encodeURIComponent(currentPath)"
+             class="text-xs px-3 py-1 bg-gray-800 text-gray-300 rounded hover:bg-gray-700 transition">Download</a>
+        </div>
+        <pre class="text-xs text-gray-300 overflow-x-auto bg-gray-800/50 rounded p-4 max-h-[70vh]" x-text="jsonContent"></pre>
+      </div>
+    </template>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fileBrowser() {
+  return {
+    currentPath: '',
+    items: [],
+    breadcrumbs: [],
+    viewType: 'directory',
+    jsonContent: '',
+    loading: false,
+    error: null,
+
+    init() { this.navigate(''); },
+
+    async navigate(path) {
+      this.loading = true; this.error = null;
+      this.currentPath = path;
+      this.updateBreadcrumbs();
+      try {
+        const res = await fetch('/api/arquivos?path=' + encodeURIComponent(path));
+        const data = await res.json();
+        if (data.error) { this.error = data.error; this.loading = false; return; }
+        if (data.type === 'directory') {
+          this.viewType = 'directory';
+          this.items = data.items;
+        } else if (data.type === 'json') {
+          this.viewType = 'json';
+          this.jsonContent = JSON.stringify(data.content, null, 2);
+        }
+      } catch(e) { this.error = 'Erro: ' + e.message; }
+      this.loading = false;
+    },
+
+    viewFile(path) { this.navigate(path); },
+
+    goUp() {
+      const parts = this.currentPath.split('/').filter(Boolean);
+      parts.pop();
+      this.navigate(parts.join('/'));
+    },
+
+    parentPath(path) {
+      const parts = (path || '').split('/').filter(Boolean);
+      parts.pop();
+      return parts.join('/');
+    },
+
+    updateBreadcrumbs() {
+      const parts = this.currentPath.split('/').filter(Boolean);
+      this.breadcrumbs = parts.map((p, i) => ({
+        name: p,
+        path: parts.slice(0, i + 1).join('/'),
+      }));
+    },
+
+    formatBytes(b) {
+      if (b < 1024) return b + ' B';
+      if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+      return (b/1024/1024).toFixed(1) + ' MB';
+    }
+  };
+}
+</script>
+{% endblock %}

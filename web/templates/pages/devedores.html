@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Devedores{% endblock %}
+
+{% block content %}
+<div x-data="devedoresPage()" x-init="init()">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-2xl font-bold">Visao Devedor</h2>
+      <p class="text-gray-400 text-sm mt-1">Resultado do S3 - processos agregados por entidade (CPF/CNPJ raiz)</p>
+    </div>
+    <div class="flex gap-2">
+      <button @click="exportXlsx()" class="text-xs px-3 py-1.5 bg-emerald-700 text-white rounded hover:bg-emerald-600 transition">Exportar Excel</button>
+      <button @click="exportCsv()" class="text-xs px-3 py-1.5 bg-gray-700 text-gray-200 rounded hover:bg-gray-600 transition">Exportar CSV</button>
+      <button @click="downloadOriginal()" x-show="originalFile"
+              class="text-xs px-3 py-1.5 bg-gray-800 text-gray-300 rounded hover:bg-gray-700 transition">Baixar Original</button>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+    <div class="bg-gray-900 rounded border border-gray-800 p-3 text-center">
+      <p class="text-xs text-gray-500">Entidades</p>
+      <p class="text-2xl font-bold text-purple-400" x-text="stats.total"></p>
+    </div>
+    <div class="bg-gray-900 rounded border border-gray-800 p-3 text-center">
+      <p class="text-xs text-gray-500">Filtrados</p>
+      <p class="text-2xl font-bold text-cyan-400" x-text="stats.filtered"></p>
+    </div>
+    <div class="bg-gray-900 rounded border border-gray-800 p-3 text-center">
+      <p class="text-xs text-gray-500">Pagina</p>
+      <p class="text-2xl font-bold text-gray-300" x-text="stats.page + '/' + stats.lastPage"></p>
+    </div>
+    <div class="bg-gray-900 rounded border border-gray-800 p-3 text-center">
+      <p class="text-xs text-gray-500">Arquivo</p>
+      <p class="text-xs text-gray-400 mt-2 truncate" x-text="originalFile || '-'"></p>
+    </div>
+  </div>
+
+  <!-- Chart: Top 10 devedores por processos -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5 mb-6">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Top 10 Devedores por Num. Processos</h3>
+    <div id="chart-top10" style="height:300px"></div>
+  </div>
+
+  <!-- Loading -->
+  <div x-show="loading" class="flex items-center gap-2 mb-4 text-gray-500 text-sm">
+    <div class="animate-spin h-4 w-4 border-2 border-purple-400 border-t-transparent rounded-full"></div>
+    Carregando dados...
+  </div>
+
+  <!-- Tabela -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+    <div id="devedores-table"></div>
+    <p x-show="!loading && stats.total === 0" class="text-gray-600 text-sm">
+      Nenhum devedor encontrado. Execute o pipeline S3 primeiro.
+    </p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function devedoresPage() {
+  return {
+    loading: true,
+    originalFile: null,
+    table: null,
+    stats: { total: 0, filtered: 0, page: 1, lastPage: 1 },
+
+    async init() {
+      try {
+        const res = await fetch('/api/devedores/meta');
+        const meta = await res.json();
+        this.originalFile = meta.file;
+        this.stats.total = meta.total;
+
+        if (!meta.columns || !meta.columns.length) {
+          this.loading = false;
+          return;
+        }
+
+        // Busca primeira pagina para o chart (top 10 por Total Processos)
+        this._buildChart();
+        this._buildTable(meta.columns);
+
+      } catch(e) {
+        this.loading = false;
+      }
+    },
+
+    async _buildChart() {
+      // Busca top 10 do backend (ordenados por Total Processos desc, size=10)
+      try {
+        const res = await fetch('/api/devedores/filter?page=1&size=10&sort=Total+Processos&dir=desc');
+        const json = await res.json();
+        const data = json.data || [];
+        const chartEl = document.getElementById('chart-top10');
+        if (!chartEl || !data.length) return;
+
+        const totalCol = 'Total Processos';
+        const chart = echarts.init(chartEl, 'dark');
+        chart.setOption({
+          backgroundColor: 'transparent',
+          tooltip: {},
+          xAxis: {
+            type: 'category',
+            data: data.map(r => {
+              const id = r['Entity ID'] || r['Nome'] || '?';
+              return id.length > 14 ? id.substring(0, 14) + '...' : id;
+            }),
+            axisLabel: {color: '#6b7280', rotate: 30}
+          },
+          yAxis: {type: 'value', axisLabel: {color: '#6b7280'}},
+          series: [{
+            type: 'bar',
+            data: data.map(r => parseInt(r[totalCol] || 0)),
+            itemStyle: {color: '#8b5cf6'},
+            barWidth: '60%'
+          }]
+        });
+        window.addEventListener('resize', () => chart.resize());
+      } catch(e) { /* chart is optional */ }
+    },
+
+    _buildTable(colNames) {
+      const self = this;
+
+      const cols = colNames.map(c => {
+        const col = {
+          title: c, field: c, headerFilter: "input",
+          headerFilterLiveFilter: false,
+          sorter: "string", minWidth: 100
+        };
+        if (c.startsWith('Qtd') || c === 'Total Processos') {
+          col.sorter = "number"; col.hozAlign = "right"; col.width = 110;
+        }
+        if (c.includes('Valor') || c.includes('Saldo')) {
+          col.sorter = "number"; col.hozAlign = "right";
+          col.formatter = function(cell) {
+            const v = parseFloat(cell.getValue());
+            if (isNaN(v)) return '-';
+            return v.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'});
+          };
+        }
+        if (c === 'Entity ID') { col.frozen = true; col.width = 160; }
+        if (c.startsWith('Flag ')) {
+          col.width = 80; col.hozAlign = "center";
+          col.formatter = function(cell) {
+            const v = parseInt(cell.getValue() || 0);
+            return v > 0
+              ? '<span class="text-emerald-400 font-bold">' + v + '</span>'
+              : '<span class="text-gray-700">0</span>';
+          };
+        }
+        return col;
+      });
+
+      this.table = new Tabulator('#devedores-table', {
+        columns: cols,
+        layout: "fitDataFill",
+        height: "600px",
+        placeholder: "Nenhum dado",
+        pagination: true,
+        paginationMode: "remote",
+        paginationSize: 50,
+        paginationButtonCount: 7,
+        sortMode: "remote",
+        filterMode: "remote",
+        ajaxURL: "/api/devedores/filter",
+        ajaxURLGenerator: function(url, config, params) {
+          return self._buildURL(params);
+        },
+        ajaxResponse: function(url, params, response) {
+          self.loading = false;
+          self.stats.filtered = response.total_filtered ?? response.total ?? 0;
+          self.stats.total = response.total ?? 0;
+          self.stats.lastPage = response.last_page ?? 1;
+          self.stats.page = params.page ?? 1;
+          return response;
+        },
+      });
+
+      this.table.on("dataLoading", () => { self.loading = true; });
+      this.table.on("dataLoaded", () => { self.loading = false; });
+    },
+
+    _buildURL(params) {
+      const p = new URLSearchParams();
+      p.set('page', params.page || 1);
+      p.set('size', params.size || 50);
+      if (params.sorters && params.sorters.length > 0) {
+        p.set('sort', params.sorters[0].field);
+        p.set('dir', params.sorters[0].dir);
+      }
+      const filters = {};
+      if (params.filter && params.filter.length > 0) {
+        for (const f of params.filter) {
+          if (f.value) filters[f.field] = f.value;
+        }
+      }
+      if (Object.keys(filters).length > 0) {
+        p.set('q', JSON.stringify(filters));
+      }
+      return '/api/devedores/filter?' + p.toString();
+    },
+
+    exportXlsx() {
+      if (this.table) this.table.download("xlsx", "devedores.xlsx", {sheetName: "Devedores"});
+    },
+    exportCsv() {
+      if (this.table) this.table.download("csv", "devedores.csv");
+    },
+    downloadOriginal() {
+      if (this.originalFile) window.open('/api/arquivos/download?path=' + encodeURIComponent(this.originalFile));
+    },
+  };
+}
+</script>
+{% endblock %}

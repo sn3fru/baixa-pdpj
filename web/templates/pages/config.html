@@ -1,0 +1,434 @@
+{% extends "base.html" %}
+{% block title %}Configuracao{% endblock %}
+
+{% block content %}
+<div x-data="configPage()" x-init="load()">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-2xl font-bold">Configuracao</h2>
+      <p class="text-gray-400 text-sm mt-1">Alteracoes sao salvas automaticamente</p>
+    </div>
+    <!-- Status indicator -->
+    <div class="flex items-center gap-3">
+      <div class="flex items-center gap-2 text-xs transition-opacity duration-300"
+           :class="saveStatus === 'idle' ? 'opacity-0' : 'opacity-100'">
+        <template x-if="saveStatus === 'saving'">
+          <div class="flex items-center gap-1.5 text-blue-400">
+            <div class="animate-spin h-3 w-3 border border-blue-400 border-t-transparent rounded-full"></div>
+            <span>Salvando...</span>
+          </div>
+        </template>
+        <template x-if="saveStatus === 'saved'">
+          <div class="flex items-center gap-1.5 text-emerald-400">
+            <span>&#10003;</span>
+            <span>Salvo</span>
+          </div>
+        </template>
+        <template x-if="saveStatus === 'error'">
+          <div class="flex items-center gap-1.5 text-red-400">
+            <span>&#10007;</span>
+            <span x-text="saveError"></span>
+          </div>
+        </template>
+      </div>
+      <button @click="validate()" class="px-3 py-1.5 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 transition text-xs">
+        Validar
+      </button>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <template x-if="loading">
+    <div class="flex items-center gap-3 py-12 justify-center">
+      <div class="animate-spin h-5 w-5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
+      <span class="text-gray-400">Carregando configuracao...</span>
+    </div>
+  </template>
+
+  <!-- Mensagem de validacao -->
+  <template x-if="message">
+    <div class="mb-4 px-4 py-2 rounded-lg text-sm"
+         :class="messageType==='ok' ? 'bg-emerald-900/30 border border-emerald-800 text-emerald-400' : 'bg-red-900/30 border border-red-800 text-red-400'"
+         x-text="message"></div>
+  </template>
+
+  <template x-if="!loading">
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    <!-- TOKENS (mais importante) -->
+    <div class="bg-gray-900 rounded-lg border border-blue-800/50 p-5 lg:col-span-2">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="text-sm font-semibold text-blue-400 uppercase tracking-wider">Tokens PDPJ (Autenticacao)</h3>
+          <p class="text-xs text-gray-500 mt-1">Tokens JWT para acessar a API. Sem tokens, o pipeline nao consegue baixar processos.</p>
+        </div>
+        <span class="px-2 py-0.5 rounded text-xs font-bold"
+              :class="tokensCount > 0 ? 'bg-emerald-900/50 text-emerald-400' : 'bg-red-900/50 text-red-400'"
+              x-text="tokensCount + ' token(s)'"></span>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Tokens (um por linha ou separados por virgula)</label>
+          <textarea x-model="tokensText" rows="4" class="cfg-input font-mono text-xs" placeholder="Cole seus tokens JWT aqui...&#10;token1&#10;token2"></textarea>
+          <p class="text-xs text-gray-600 mt-1">Obtenha tokens em: <code class="text-gray-400">https://sso.cloud.pje.jus.br/auth/realms/pje</code></p>
+        </div>
+        <!-- Tokens mascarados (readonly) -->
+        <template x-if="cfg.tokens_masked && cfg.tokens_masked.length > 0">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">Tokens salvos atualmente</label>
+            <div class="space-y-1">
+              <template x-for="(t, i) in cfg.tokens_masked" :key="i">
+                <div class="flex items-center gap-2 bg-gray-800/50 rounded px-3 py-1.5">
+                  <span class="text-xs font-mono text-gray-400" x-text="'#' + (i+1)"></span>
+                  <span class="text-xs font-mono text-gray-500" x-text="t"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Caminhos -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Caminhos</h3>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Arquivo de Entrada</label>
+          <input type="text" x-model="cfg.input_file" class="cfg-input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Diretorio de Saida</label>
+          <input type="text" x-model="cfg.output_dir" class="cfg-input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Base URL da API</label>
+          <input type="text" x-model="cfg.base_url" class="cfg-input font-mono text-xs">
+        </div>
+      </div>
+    </div>
+
+    <!-- Filtros da API -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Filtros da API</h3>
+      <p class="text-xs text-yellow-500/80 mb-4 flex items-start gap-2">
+        <span class="mt-0.5">&#9888;</span>
+        <span>Campos vazios = filtro <strong>desativado</strong>. A busca na API nao usara esse parametro. Preencha apenas os filtros que deseja aplicar.</span>
+      </p>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Tribunal <span class="text-gray-600">(vazio = todos os tribunais)</span></label>
+          <input type="text" x-model="cfg.tribunal" class="cfg-input-optional" placeholder="ex: TJPE">
+          <p class="text-xs mt-1" :class="cfg.tribunal ? 'text-emerald-600' : 'text-gray-600'"
+             x-text="cfg.tribunal ? 'Filtro ativo: ' + cfg.tribunal : 'Filtro desativado — buscara em todos os tribunais'"></p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Classe do processo <span class="text-gray-600">(vazio = todas as classes)</span></label>
+          <input type="text" x-model="cfg.id_classe" class="cfg-input-optional" placeholder="ex: 1116 (Execucao Fiscal)">
+          <p class="text-xs mt-1" :class="cfg.id_classe ? 'text-emerald-600' : 'text-gray-600'"
+             x-text="cfg.id_classe ? 'Filtro ativo: classe ' + cfg.id_classe : 'Filtro desativado — buscara todas as classes'"></p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Filtro Municipio <span class="text-gray-600">(vazio = todos os municipios)</span></label>
+          <input type="text" x-model="cfg.filtro_municipio" class="cfg-input-optional" placeholder="ex: Recife">
+          <p class="text-xs mt-1" :class="cfg.filtro_municipio ? 'text-emerald-600' : 'text-gray-600'"
+             x-text="cfg.filtro_municipio ? 'Filtro ativo: ' + cfg.filtro_municipio : 'Filtro desativado — todos os municipios'"></p>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Workers por Token</label>
+          <input type="number" x-model.number="cfg.workers_per_token" min="1" max="20" class="cfg-input">
+          <p class="text-xs text-gray-600 mt-1">Threads simultaneas por token. Total: <span class="text-gray-400" x-text="tokensCount * (cfg.workers_per_token||1)"></span> workers</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Limites de busca -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Limites de Busca</h3>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Max por Pagina</label>
+          <input type="number" x-model.number="cfg.max_por_pagina" class="cfg-input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Max Paginas/Caso</label>
+          <input type="number" x-model.number="cfg.max_paginas_por_caso" class="cfg-input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Max Processos Totais/Caso</label>
+          <input type="number" x-model.number="cfg.max_processos_totais" class="cfg-input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Max Processos por Doc</label>
+          <input type="number" x-model.number="cfg.max_processos_per_doc" class="cfg-input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Max Processos por CNPJ Root</label>
+          <input type="number" x-model.number="cfg.max_processos_per_root" class="cfg-input">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">Max Filiais</label>
+          <input type="number" x-model.number="cfg.max_filiais" class="cfg-input">
+        </div>
+      </div>
+    </div>
+
+    <!-- Tipos de busca -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Tipos de Busca</h3>
+      <p class="text-xs text-gray-500 mb-4">Quais metodos de busca usar ao pesquisar cada individuo na API PDPJ.</p>
+      <div class="space-y-4">
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" x-model="cfg.enable_busca_documento" class="cfg-check mt-0.5">
+          <div>
+            <span class="text-sm text-gray-200">Busca por Documento (CPF/CNPJ)</span>
+            <p class="text-xs text-gray-500 mt-0.5">Pesquisa processos pelo numero do documento do individuo.</p>
+          </div>
+        </label>
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" x-model="cfg.enable_busca_nome" class="cfg-check mt-0.5">
+          <div>
+            <span class="text-sm text-gray-200">Busca por Nome</span>
+            <p class="text-xs text-gray-500 mt-0.5">Pesquisa processos pelo nome da parte. Retorna apenas a lista de processos encontrados.</p>
+          </div>
+        </label>
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" x-model="cfg.enable_busca_filial" class="cfg-check mt-0.5">
+          <div>
+            <span class="text-sm text-gray-200">Busca por Filiais (CNPJ)</span>
+            <p class="text-xs text-gray-500 mt-0.5">Para empresas (CNPJ), itera pelas filiais gerando CNPJs completos. Controlado por "Max Filiais".</p>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <!-- O que baixar -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">O Que Baixar</h3>
+      <p class="text-xs text-gray-500 mb-4">Controla a profundidade do download de cada processo encontrado.</p>
+      <div class="space-y-4">
+        <div class="p-3 rounded-lg" :class="cfg.download_detalhes ? 'bg-blue-900/20 border border-blue-800/50' : 'bg-gray-800/50 border border-gray-700/50'">
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input type="checkbox" x-model="cfg.download_detalhes" class="cfg-check mt-0.5">
+            <div>
+              <span class="text-sm font-medium" :class="cfg.download_detalhes ? 'text-blue-300' : 'text-gray-300'">Baixar Detalhes (Capas)</span>
+              <p class="text-xs mt-1" :class="cfg.download_detalhes ? 'text-blue-400/70' : 'text-gray-500'">
+                Alem da lista de processos, faz uma <strong>segunda chamada de API</strong> para cada processo individualmente, baixando a capa completa (partes, movimentacoes, valores, etc).
+              </p>
+            </div>
+          </label>
+        </div>
+        <div class="text-xs space-y-2 px-1">
+          <div class="flex items-start gap-2">
+            <span class="text-gray-600 mt-0.5">&#9679;</span>
+            <div>
+              <span class="text-gray-400 font-medium">Desligado:</span>
+              <span class="text-gray-500"> Baixa apenas a <strong>lista de processos</strong> (paginas de resultado). Rapido, pouco consumo de API. O S2 consolida com dados basicos.</span>
+            </div>
+          </div>
+          <div class="flex items-start gap-2">
+            <span class="text-blue-500 mt-0.5">&#9679;</span>
+            <div>
+              <span class="text-gray-400 font-medium">Ligado:</span>
+              <span class="text-gray-500"> Baixa a lista <strong>+ detalhe de cada processo</strong> (capa completa). Mais lento, mais dados. O S2 consolida com informacoes detalhadas (partes, valores, movimentacoes).</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <hr class="border-gray-800 my-4">
+      <div class="space-y-3">
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" x-model="cfg.debug" class="cfg-check mt-0.5">
+          <div>
+            <span class="text-sm text-gray-300">Modo Debug</span>
+            <p class="text-xs text-gray-500 mt-0.5">Logs detalhados no terminal.</p>
+          </div>
+        </label>
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" x-model="cfg.dashboard_enabled" class="cfg-check mt-0.5">
+          <div>
+            <span class="text-sm text-gray-300">Dashboard Terminal (CLI)</span>
+            <p class="text-xs text-gray-500 mt-0.5">Exibe painel de progresso no terminal durante execucao via CLI.</p>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <!-- Flags ativas -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5 lg:col-span-2">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Flags Disponiveis</h3>
+      <p class="text-xs text-gray-500 mb-3">Flags sao avaliadas automaticamente para cada processo. Para adicionar novas, crie funcoes em <code class="text-gray-400">flags.py</code>.</p>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+        {% for flag in flags %}
+        <div class="flex items-center gap-3 py-2 px-3 bg-gray-800/50 rounded">
+          <span class="px-2 py-0.5 rounded text-xs font-bold
+                       {% if flag.color == 'orange' %}bg-orange-900/50 text-orange-400
+                       {% elif flag.color == 'red' %}bg-red-900/50 text-red-400
+                       {% elif flag.color == 'purple' %}bg-purple-900/50 text-purple-400
+                       {% elif flag.color == 'yellow' %}bg-yellow-900/50 text-yellow-400
+                       {% elif flag.color == 'green' %}bg-green-900/50 text-green-400
+                       {% else %}bg-blue-900/50 text-blue-400{% endif %}">{{ flag.label }}</span>
+          <span class="text-xs text-gray-400 flex-1">{{ flag.description }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  </template>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function configPage() {
+  return {
+    cfg: {},
+    tokensText: '',
+    tokensCount: 0,
+    loading: true,
+    message: null,
+    messageType: 'ok',
+
+    // Auto-save state
+    saveStatus: 'idle',  // idle | saving | saved | error
+    saveError: '',
+    _debounceTimer: null,
+    _ready: false,        // Ignora watches durante load inicial
+    _lastJson: '',        // Detecta mudancas reais
+
+    async load() {
+      try {
+        const res = await fetch('/api/config');
+        this.cfg = await res.json();
+        this.tokensCount = this.cfg.tokens_count || 0;
+        this.tokensText = '';
+        this._lastJson = JSON.stringify(this._buildBody());
+        // Inicia watchers DEPOIS do load
+        this.$nextTick(() => {
+          this._ready = true;
+          this._setupWatchers();
+        });
+      } catch(e) {
+        this.message = 'Erro ao carregar configuracao: ' + e.message;
+        this.messageType = 'err';
+      }
+      this.loading = false;
+    },
+
+    _setupWatchers() {
+      // Watch profundo em todos os campos do cfg
+      const watchFields = [
+        'cfg.input_file','cfg.output_dir','cfg.base_url',
+        'cfg.tribunal','cfg.id_classe','cfg.filtro_municipio',
+        'cfg.max_por_pagina','cfg.max_paginas_por_caso','cfg.max_processos_totais',
+        'cfg.max_processos_per_doc','cfg.max_processos_per_root','cfg.max_filiais',
+        'cfg.workers_per_token',
+        'cfg.download_detalhes','cfg.enable_busca_documento','cfg.enable_busca_nome',
+        'cfg.enable_busca_filial','cfg.debug','cfg.dashboard_enabled',
+      ];
+      for (const field of watchFields) {
+        this.$watch(field, () => this._onChange());
+      }
+      // Tokens com debounce maior (1.5s)
+      this.$watch('tokensText', () => this._onChange(1500));
+    },
+
+    _onChange(delay = 800) {
+      if (!this._ready) return;
+      // Debounce
+      clearTimeout(this._debounceTimer);
+      this._debounceTimer = setTimeout(() => this._autoSave(), delay);
+    },
+
+    _buildBody() {
+      const body = {};
+      // Texto obrigatorio
+      for (const f of ['input_file','output_dir','base_url']) {
+        if (this.cfg[f] !== undefined && this.cfg[f] !== null) body[f] = this.cfg[f];
+      }
+      // Texto opcional (filtros API)
+      for (const f of ['tribunal','id_classe','filtro_municipio']) {
+        body[f] = (this.cfg[f] || '').trim();
+      }
+      // Numerico
+      for (const f of ['max_por_pagina','max_paginas_por_caso','max_processos_totais',
+                        'max_processos_per_doc','max_processos_per_root','max_filiais','workers_per_token']) {
+        if (this.cfg[f] !== undefined && this.cfg[f] !== null) body[f] = parseInt(this.cfg[f]);
+      }
+      // Booleano
+      for (const f of ['download_detalhes','enable_busca_documento','enable_busca_nome',
+                        'enable_busca_filial','debug','dashboard_enabled']) {
+        if (this.cfg[f] !== undefined) body[f] = !!this.cfg[f];
+      }
+      // Tokens
+      if (this.tokensText.trim()) {
+        body.tokens = this.tokensText.split(/[\n,]+/).map(t => t.trim()).filter(t => t.length > 0);
+      }
+      return body;
+    },
+
+    async _autoSave() {
+      const body = this._buildBody();
+      const json = JSON.stringify(body);
+      // Nao salva se nada mudou
+      if (json === this._lastJson) return;
+      this._lastJson = json;
+
+      this.saveStatus = 'saving';
+      try {
+        const res = await fetch('/api/config', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: json,
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          this.saveStatus = 'saved';
+          // Se tokens foram atualizados, recarrega contagem
+          if (body.tokens) {
+            this.tokensCount = body.tokens.length;
+            // Recarrega mascaras sem resetar o form
+            const fresh = await fetch('/api/config');
+            const freshData = await fresh.json();
+            this.cfg.tokens_masked = freshData.tokens_masked;
+            this.cfg.tokens_count = freshData.tokens_count;
+            this.tokensCount = freshData.tokens_count;
+            this.tokensText = '';  // Limpa textarea apos salvar tokens
+          }
+          // Fade out "Salvo" apos 2s
+          setTimeout(() => { if (this.saveStatus === 'saved') this.saveStatus = 'idle'; }, 2000);
+        } else {
+          this.saveStatus = 'error';
+          this.saveError = data.error || 'Erro';
+          setTimeout(() => { if (this.saveStatus === 'error') this.saveStatus = 'idle'; }, 4000);
+        }
+      } catch(e) {
+        this.saveStatus = 'error';
+        this.saveError = e.message;
+        setTimeout(() => { if (this.saveStatus === 'error') this.saveStatus = 'idle'; }, 4000);
+      }
+    },
+
+    async validate() {
+      this.message = null;
+      try {
+        const res = await fetch('/api/config/validate');
+        const data = await res.json();
+        if (data.valid) {
+          this.message = 'Configuracao valida!';
+          this.messageType = 'ok';
+        } else {
+          this.message = 'Problemas: ' + data.errors.join(' | ');
+          this.messageType = 'err';
+        }
+        // Limpa mensagem de validacao apos 5s
+        setTimeout(() => { this.message = null; }, 5000);
+      } catch(e) {
+        this.message = 'Erro: ' + e.message;
+        this.messageType = 'err';
+      }
+    }
+  };
+}
+</script>
+{% endblock %}

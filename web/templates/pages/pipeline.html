@@ -1,0 +1,701 @@
+{% extends "base.html" %}
+{% block title %}Pipeline{% endblock %}
+
+{% block content %}
+<div x-data="pipelinePage()" x-init="init()">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-2xl font-bold">Pipeline</h2>
+      <p class="text-gray-400 text-sm mt-1">Execute e acompanhe as etapas em tempo real</p>
+    </div>
+    <div class="flex items-center gap-4">
+      <!-- Timer -->
+      <div x-show="running || pipelineDone" class="text-right">
+        <p class="text-xs text-gray-500">Tempo</p>
+        <p class="font-mono text-lg font-bold" :class="running ? 'text-blue-400' : 'text-emerald-400'"
+           x-text="pipelineDone && pipelineElapsed ? formatElapsedFinal() : elapsedDisplay"></p>
+      </div>
+      <button @click="executar()" :disabled="running"
+              class="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 transition font-semibold text-sm flex items-center gap-2">
+        <template x-if="!running">
+          <span class="flex items-center gap-2">
+            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            Executar Pipeline
+          </span>
+        </template>
+        <template x-if="running">
+          <span class="flex items-center gap-2">
+            <div class="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+            Executando...
+          </span>
+        </template>
+      </button>
+    </div>
+  </div>
+
+  <!-- Selecao de etapas -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 p-4 mb-6">
+    <div class="flex items-center gap-8">
+      <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Etapas:</span>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" x-model="selectedSteps" value="s1" class="cfg-check" :disabled="running">
+        <span class="text-sm">S1 - Coleta</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" x-model="selectedSteps" value="s2" class="cfg-check" :disabled="running">
+        <span class="text-sm">S2 - Organizacao</span>
+      </label>
+      <label class="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" x-model="selectedSteps" value="s3" class="cfg-check" :disabled="running">
+        <span class="text-sm">S3 - Visao Devedor</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- KANBAN VISUAL - Cards ricos                                      -->
+  <!-- ================================================================ -->
+  <div class="grid grid-cols-3 gap-5 mb-6">
+
+    <!-- ============ S1 - Coleta ============ -->
+    <div class="bg-gray-900 rounded-xl border-2 p-5 transition-all duration-500 relative overflow-hidden"
+         :class="{
+           'border-gray-800': s1.status === 'pending',
+           'card-running': s1.status === 'running',
+           'card-completed': s1.status === 'completed',
+           'card-error': s1.status === 'error',
+         }">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold"
+               :class="{
+                 'bg-gray-800 text-gray-500': s1.status === 'pending',
+                 'bg-blue-600 text-white': s1.status === 'running',
+                 'bg-emerald-600 text-white': s1.status === 'completed',
+                 'bg-red-600 text-white': s1.status === 'error',
+               }">S1</div>
+          <div>
+            <h4 class="font-semibold text-sm">Coleta Unificada</h4>
+            <p class="text-xs text-gray-500">Documento, nome, filiais</p>
+          </div>
+        </div>
+        <span class="text-xs px-2.5 py-1 rounded-full font-medium"
+              :class="{
+                'bg-gray-800 text-gray-500': s1.status === 'pending',
+                'bg-blue-900/60 text-blue-300': s1.status === 'running',
+                'bg-emerald-900/60 text-emerald-300': s1.status === 'completed',
+                'bg-red-900/60 text-red-300': s1.status === 'error',
+              }" x-text="s1.statusLabel"></span>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="h-2 bg-gray-800 rounded-full overflow-hidden mb-4"
+           x-show="s1.status !== 'pending'">
+        <div class="h-full rounded-full progress-transition"
+             :class="{
+               'bg-blue-500 progress-bar-animated': s1.status === 'running',
+               'bg-emerald-500': s1.status === 'completed',
+               'bg-red-500': s1.status === 'error',
+             }"
+             :style="'width:' + s1.progress + '%'"></div>
+      </div>
+      <div class="flex justify-between text-xs text-gray-500 -mt-2 mb-3"
+           x-show="s1.status !== 'pending'">
+        <span x-text="s1.processed + '/' + s1.total + ' individuos'"></span>
+        <span class="font-mono font-bold"
+              :class="s1.status === 'completed' ? 'text-emerald-400' : 'text-blue-400'"
+              x-text="s1.progress + '%'"></span>
+      </div>
+
+      <!-- Individuo atual -->
+      <div x-show="s1.currentName && s1.status === 'running'"
+           class="bg-gray-800/60 rounded-lg px-3 py-2 mb-3 border border-gray-700/50">
+        <p class="text-xs text-gray-500 mb-0.5">Processando:</p>
+        <p class="text-sm font-medium text-blue-300 name-pulsing truncate"
+           x-text="s1.currentName"></p>
+      </div>
+
+      <!-- Metricas em grid -->
+      <div class="grid grid-cols-3 gap-2" x-show="s1.status !== 'pending'">
+        <div class="bg-gray-800/50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-bold text-blue-400 num-pop" :key="'s1p'+s1.processos"
+             x-text="s1.processos"></p>
+          <p class="text-xs text-gray-500">Processos</p>
+        </div>
+        <div class="bg-gray-800/50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-bold text-purple-400 num-pop" :key="'s1d'+s1.detalhes"
+             x-text="s1.detalhes"></p>
+          <p class="text-xs text-gray-500">Detalhes</p>
+        </div>
+        <div class="bg-gray-800/50 rounded-lg p-2.5 text-center">
+          <p class="text-lg font-bold num-pop" :key="'s1e'+s1.erros"
+             :class="s1.erros > 0 ? 'text-red-400' : 'text-gray-600'"
+             x-text="s1.erros"></p>
+          <p class="text-xs text-gray-500">Erros</p>
+        </div>
+      </div>
+
+      <!-- Tempo S1 -->
+      <div x-show="s1.elapsed" class="mt-3 text-xs text-gray-500 text-right">
+        Tempo: <span class="text-gray-400 font-mono" x-text="s1.elapsed + 's'"></span>
+      </div>
+    </div>
+
+    <!-- ============ S2 - Organizacao ============ -->
+    <div class="bg-gray-900 rounded-xl border-2 p-5 transition-all duration-500 relative overflow-hidden"
+         :class="{
+           'border-gray-800': s2.status === 'pending',
+           'card-running': s2.status === 'running',
+           'card-completed': s2.status === 'completed',
+           'card-error': s2.status === 'error',
+         }">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold"
+               :class="{
+                 'bg-gray-800 text-gray-500': s2.status === 'pending',
+                 'bg-blue-600 text-white': s2.status === 'running',
+                 'bg-emerald-600 text-white': s2.status === 'completed',
+                 'bg-red-600 text-white': s2.status === 'error',
+               }">S2</div>
+          <div>
+            <h4 class="font-semibold text-sm">Organiza Processos</h4>
+            <p class="text-xs text-gray-500">Deduplicacao e consolidacao</p>
+          </div>
+        </div>
+        <span class="text-xs px-2.5 py-1 rounded-full font-medium"
+              :class="{
+                'bg-gray-800 text-gray-500': s2.status === 'pending',
+                'bg-blue-900/60 text-blue-300': s2.status === 'running',
+                'bg-emerald-900/60 text-emerald-300': s2.status === 'completed',
+                'bg-red-900/60 text-red-300': s2.status === 'error',
+              }" x-text="s2.statusLabel"></span>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="h-2 bg-gray-800 rounded-full overflow-hidden mb-4"
+           x-show="s2.status !== 'pending'">
+        <div class="h-full rounded-full progress-transition"
+             :class="{
+               'bg-blue-500 progress-bar-animated': s2.status === 'running',
+               'bg-emerald-500': s2.status === 'completed',
+               'bg-red-500': s2.status === 'error',
+             }"
+             :style="'width:' + s2.progress + '%'"></div>
+      </div>
+      <div class="flex justify-between text-xs text-gray-500 -mt-2 mb-3"
+           x-show="s2.status !== 'pending'">
+        <span x-text="s2.processed + '/' + s2.total + ' entidades'"></span>
+        <span class="font-mono font-bold"
+              :class="s2.status === 'completed' ? 'text-emerald-400' : 'text-blue-400'"
+              x-text="s2.progress + '%'"></span>
+      </div>
+
+      <!-- Metricas -->
+      <div class="grid grid-cols-2 gap-2" x-show="s2.status !== 'pending'">
+        <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+          <p class="text-2xl font-bold text-amber-400 num-pop" :key="'s2r'+s2.records"
+             x-text="s2.records.toLocaleString('pt-BR')"></p>
+          <p class="text-xs text-gray-500">Registros</p>
+        </div>
+        <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+          <p class="text-2xl font-bold text-cyan-400 num-pop" :key="'s2t'+s2.totalFinal"
+             x-text="s2.totalFinal.toLocaleString('pt-BR')"></p>
+          <p class="text-xs text-gray-500">Processos Unicos</p>
+        </div>
+      </div>
+
+      <!-- Arquivo gerado -->
+      <div x-show="s2.arquivo" class="mt-3 bg-emerald-900/20 border border-emerald-800/50 rounded-lg px-3 py-2">
+        <p class="text-xs text-emerald-400 truncate" x-text="s2.arquivo"></p>
+      </div>
+    </div>
+
+    <!-- ============ S3 - Visao Devedor ============ -->
+    <div class="bg-gray-900 rounded-xl border-2 p-5 transition-all duration-500 relative overflow-hidden"
+         :class="{
+           'border-gray-800': s3.status === 'pending',
+           'card-running': s3.status === 'running',
+           'card-completed': s3.status === 'completed',
+           'card-error': s3.status === 'error',
+         }">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold"
+               :class="{
+                 'bg-gray-800 text-gray-500': s3.status === 'pending',
+                 'bg-blue-600 text-white': s3.status === 'running',
+                 'bg-emerald-600 text-white': s3.status === 'completed',
+                 'bg-red-600 text-white': s3.status === 'error',
+               }">S3</div>
+          <div>
+            <h4 class="font-semibold text-sm">Visao Devedor</h4>
+            <p class="text-xs text-gray-500">Agregacao por entidade</p>
+          </div>
+        </div>
+        <span class="text-xs px-2.5 py-1 rounded-full font-medium"
+              :class="{
+                'bg-gray-800 text-gray-500': s3.status === 'pending',
+                'bg-blue-900/60 text-blue-300': s3.status === 'running',
+                'bg-emerald-900/60 text-emerald-300': s3.status === 'completed',
+                'bg-red-900/60 text-red-300': s3.status === 'error',
+              }" x-text="s3.statusLabel"></span>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="h-2 bg-gray-800 rounded-full overflow-hidden mb-4"
+           x-show="s3.status !== 'pending'">
+        <div class="h-full rounded-full progress-transition"
+             :class="{
+               'bg-blue-500 progress-bar-animated': s3.status === 'running',
+               'bg-emerald-500': s3.status === 'completed',
+               'bg-red-500': s3.status === 'error',
+             }"
+             :style="'width:' + s3.progress + '%'"></div>
+      </div>
+      <div class="flex justify-between text-xs text-gray-500 -mt-2 mb-3"
+           x-show="s3.status !== 'pending'">
+        <span x-text="s3.processed + '/' + s3.total + ' entidades'"></span>
+        <span class="font-mono font-bold"
+              :class="s3.status === 'completed' ? 'text-emerald-400' : 'text-blue-400'"
+              x-text="s3.progress + '%'"></span>
+      </div>
+
+      <!-- Metricas -->
+      <div class="grid grid-cols-2 gap-2" x-show="s3.status !== 'pending'">
+        <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+          <p class="text-2xl font-bold text-pink-400 num-pop" :key="'s3p'+s3.totalProcessos"
+             x-text="s3.totalProcessos.toLocaleString('pt-BR')"></p>
+          <p class="text-xs text-gray-500">Processos</p>
+        </div>
+        <div class="bg-gray-800/50 rounded-lg p-3 text-center">
+          <p class="text-2xl font-bold text-emerald-400 num-pop" :key="'s3e'+s3.entidades"
+             x-text="s3.entidades"></p>
+          <p class="text-xs text-gray-500">Entidades</p>
+        </div>
+      </div>
+
+      <!-- Arquivo gerado -->
+      <div x-show="s3.arquivo" class="mt-3 bg-emerald-900/20 border border-emerald-800/50 rounded-lg px-3 py-2">
+        <p class="text-xs text-emerald-400 truncate" x-text="s3.arquivo"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Resumo global (aparece quando pipeline termina)                  -->
+  <!-- ================================================================ -->
+  <div x-show="pipelineDone" x-transition
+       class="bg-gradient-to-r from-emerald-900/30 via-blue-900/20 to-purple-900/20 rounded-xl border border-emerald-700/30 p-6 mb-6">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/>
+        </svg>
+      </div>
+      <div>
+        <h3 class="text-lg font-bold text-emerald-400">Pipeline Concluido!</h3>
+        <p class="text-sm text-gray-400" x-text="'Tempo total: ' + (pipelineElapsed || '?') + 's'"></p>
+      </div>
+    </div>
+    <div class="grid grid-cols-4 gap-4">
+      <div class="text-center">
+        <p class="text-3xl font-bold text-blue-400" x-text="s1.processed"></p>
+        <p class="text-xs text-gray-500">Individuos</p>
+      </div>
+      <div class="text-center">
+        <p class="text-3xl font-bold text-purple-400" x-text="s1.processos"></p>
+        <p class="text-xs text-gray-500">Processos Encontrados</p>
+      </div>
+      <div class="text-center">
+        <p class="text-3xl font-bold text-amber-400" x-text="s2.totalFinal.toLocaleString('pt-BR')"></p>
+        <p class="text-xs text-gray-500">Consolidados</p>
+      </div>
+      <div class="text-center">
+        <p class="text-3xl font-bold text-emerald-400" x-text="s3.entidades"></p>
+        <p class="text-xs text-gray-500">Entidades</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Log de eventos                                                    -->
+  <!-- ================================================================ -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+        </svg>
+        Log de Eventos
+      </h3>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1.5 cursor-pointer text-xs text-gray-500">
+          <input type="checkbox" x-model="showDetails" class="cfg-check" style="width:0.75rem;height:0.75rem">
+          Mostrar detalhes
+        </label>
+        <span class="text-xs text-gray-600 font-mono" x-text="events.length + ' eventos'"></span>
+      </div>
+    </div>
+    <div class="h-72 overflow-y-auto font-mono text-xs space-y-0.5 pr-1" id="event-log">
+      <template x-for="(evt, i) in filteredEvents()" :key="i">
+        <div class="py-0.5 px-2 rounded hover:bg-gray-800/50 flex items-start gap-2"
+             :class="evtRowClass(evt)">
+          <span class="text-gray-700 select-none shrink-0 w-16" x-text="formatTime(evt.ts)"></span>
+          <span class="shrink-0 w-1.5 h-1.5 rounded-full mt-1.5" :class="evtDotClass(evt)"></span>
+          <span class="text-gray-500 shrink-0" x-text="evt.event || '?'"></span>
+          <span class="text-gray-400 truncate" x-text="formatData(evt.data)"></span>
+        </div>
+      </template>
+      <template x-if="events.length === 0 && !running">
+        <div class="flex flex-col items-center justify-center h-full text-gray-700">
+          <svg class="w-12 h-12 mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M13 10V3L4 14h7v7l9-11h-7z"/>
+          </svg>
+          <p>Nenhum evento. Execute o pipeline para comecar.</p>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function pipelinePage() {
+  return {
+    running: false,
+    pipelineDone: false,
+    pipelineElapsed: null,
+    selectedSteps: ['s1','s2','s3'],
+    events: [],
+    sseIndex: 0,
+    _evtSource: null,
+    _startTime: null,
+    showDetails: false,
+    elapsedDisplay: '--',
+
+    // ====== Estado rico por etapa ======
+    s1: {
+      status: 'pending', statusLabel: 'Pendente', progress: 0,
+      total: 0, processed: 0, processos: 0, detalhes: 0, erros: 0,
+      currentName: '', currentIdx: -1, elapsed: null,
+    },
+    s2: {
+      status: 'pending', statusLabel: 'Pendente', progress: 0,
+      total: 0, processed: 0, records: 0, totalFinal: 0, arquivo: '',
+    },
+    s3: {
+      status: 'pending', statusLabel: 'Pendente', progress: 0,
+      total: 0, processed: 0, totalProcessos: 0, entidades: 0, arquivo: '',
+    },
+
+    // ====== Init ======
+    async init() {
+      // Timer reativo: atualiza elapsedDisplay a cada segundo
+      this._timerInterval = setInterval(() => {
+        if (this.running && this._startTime) {
+          const elapsed = Math.floor((Date.now() - this._startTime) / 1000);
+          const m = Math.floor(elapsed / 60);
+          const s = elapsed % 60;
+          this.elapsedDisplay = m > 0 ? `${m}m ${String(s).padStart(2,'0')}s` : `${s}s`;
+        }
+      }, 1000);
+
+      try {
+        const res = await fetch('/api/status');
+        const status = await res.json();
+        if (status.running) {
+          this.running = true;
+          this._startTime = Date.now();
+          this.events = [];
+          this.sseIndex = 0;
+          this.listenSSE();
+        }
+      } catch(e) { /* ignore */ }
+    },
+
+    // ====== Executar ======
+    async executar() {
+      if (this.running) return;
+      this.running = true;
+      this.pipelineDone = false;
+      this.pipelineElapsed = null;
+      this._startTime = Date.now();
+      this.events = [];
+      this.sseIndex = 0;
+      this._resetSteps();
+
+      try {
+        const res = await fetch('/api/executar', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({steps: this.selectedSteps}),
+        });
+        const data = await res.json();
+        if (data.error) {
+          if (data.status === 'already_running') {
+            this.listenSSE();
+            return;
+          }
+          this.events.push({event: 'error', data: {message: data.error}, ts: Date.now()/1000});
+          this.running = false;
+          return;
+        }
+        this.listenSSE();
+      } catch(e) {
+        this.events.push({event: 'connection_error', data: {message: e.message}, ts: Date.now()/1000});
+        this.running = false;
+      }
+    },
+
+    _resetSteps() {
+      Object.assign(this.s1, {status:'pending', statusLabel:'Pendente', progress:0, total:0, processed:0, processos:0, detalhes:0, erros:0, currentName:'', currentIdx:-1, elapsed:null});
+      Object.assign(this.s2, {status:'pending', statusLabel:'Pendente', progress:0, total:0, processed:0, records:0, totalFinal:0, arquivo:''});
+      Object.assign(this.s3, {status:'pending', statusLabel:'Pendente', progress:0, total:0, processed:0, totalProcessos:0, entidades:0, arquivo:''});
+    },
+
+    // ====== SSE ======
+    listenSSE() {
+      if (this._evtSource) { this._evtSource.close(); this._evtSource = null; }
+
+      const url = '/api/status/stream?since=' + this.sseIndex;
+      const evtSource = new EventSource(url);
+      this._evtSource = evtSource;
+
+      evtSource.onmessage = (e) => {
+        try {
+          const evt = JSON.parse(e.data);
+          if (evt._idx !== undefined) this.sseIndex = evt._idx + 1;
+
+          if (evt.event === 'stream_end') {
+            evtSource.close();
+            this._evtSource = null;
+            this.running = false;
+            return;
+          }
+
+          this.events.push(evt);
+          this.processEvent(evt);
+
+          this.$nextTick(() => {
+            const log = document.getElementById('event-log');
+            if (log) log.scrollTop = log.scrollHeight;
+          });
+
+          if (evt.event === 'pipeline_done' || evt.event === 'pipeline_error') {
+            this.running = false;
+          }
+        } catch(err) {}
+      };
+
+      evtSource.onerror = () => {
+        evtSource.close();
+        this._evtSource = null;
+        setTimeout(async () => {
+          try {
+            const res = await fetch('/api/status');
+            const status = await res.json();
+            if (status.running) {
+              this.listenSSE();
+            } else {
+              this.running = false;
+            }
+          } catch(e) { this.running = false; }
+        }, 3000);
+      };
+    },
+
+    // ====== Processa cada evento e atualiza estado rico ======
+    processEvent(evt) {
+      const e = evt.event || '';
+      const d = evt.data || {};
+
+      // --- Pipeline global ---
+      if (e === 'pipeline_inicio') {
+        this._startTime = Date.now();
+      }
+      if (e === 'pipeline_fim') {
+        this.pipelineElapsed = d.elapsed ? parseFloat(d.elapsed).toFixed(1) : null;
+        this.pipelineDone = true;
+        // Para o timer
+        const s = parseFloat(this.pipelineElapsed || 0);
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        this.elapsedDisplay = m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+      }
+      if (e === 'pipeline_done') {
+        if (!this.pipelineDone) this.pipelineDone = true;
+        this.running = false;
+      }
+      if (e === 'pipeline_error') {
+        this.running = false;
+      }
+
+      // --- S1: Coleta ---
+      if (e === 'coleta_inicio') {
+        this.s1.status = 'running';
+        this.s1.statusLabel = 'Coletando...';
+        this.s1.total = d.total || 0;
+        this.s1.progress = 0;
+      }
+      if (e === 'ind_start') {
+        this.s1.currentName = d.nome || d.id || '';
+        this.s1.currentIdx = d.idx != null ? d.idx : this.s1.currentIdx;
+      }
+      if (e === 'det_ok') {
+        this.s1.detalhes++;
+      }
+      if (e === 'det_error' || e === 'det_404') {
+        this.s1.erros++;
+      }
+      if (e === 'ind_done') {
+        this.s1.processed++;
+        this.s1.processos += (d.procs || 0);
+        if (this.s1.total > 0) {
+          this.s1.progress = Math.round(this.s1.processed / this.s1.total * 100);
+        }
+        this.s1.statusLabel = this.s1.processed + '/' + this.s1.total;
+      }
+      if (e === 'coleta_fim') {
+        this.s1.status = 'completed';
+        this.s1.statusLabel = 'Concluido';
+        this.s1.progress = 100;
+        this.s1.currentName = '';
+        this.s1.processed = d.processados || d.total || this.s1.processed;
+        this.s1.total = d.total || this.s1.total;
+        this.s1.processos = d.processos || this.s1.processos;
+        this.s1.detalhes = d.detalhes || this.s1.detalhes;
+        this.s1.erros = d.erros || this.s1.erros;
+        this.s1.elapsed = d.elapsed ? parseFloat(d.elapsed).toFixed(1) : null;
+      }
+
+      // --- S2: Organizacao ---
+      if (e === 's2_inicio') {
+        this.s2.status = 'running';
+        this.s2.statusLabel = 'Organizando...';
+        this.s2.total = d.total || 0;
+        this.s2.progress = 0;
+      }
+      if (e === 's2_progresso') {
+        this.s2.processed = d.i || this.s2.processed;
+        this.s2.records = d.records || this.s2.records;
+        if (this.s2.total > 0) {
+          this.s2.progress = Math.round(this.s2.processed / this.s2.total * 100);
+        }
+        this.s2.statusLabel = this.s2.processed + '/' + this.s2.total;
+      }
+      if (e === 's2_fim') {
+        this.s2.status = 'completed';
+        this.s2.statusLabel = 'Concluido';
+        this.s2.progress = 100;
+        this.s2.totalFinal = d.total || this.s2.records;
+        this.s2.arquivo = d.arquivo || '';
+      }
+
+      // --- S3: Visao Devedor ---
+      if (e === 's3_inicio') {
+        this.s3.status = 'running';
+        this.s3.statusLabel = 'Agregando...';
+        this.s3.totalProcessos = d.total_processos || 0;
+        this.s3.total = d.total_processos || 0;  // para a barra %
+        this.s3.progress = 0;
+      }
+      if (e === 's3_progresso') {
+        this.s3.processed = d.i || this.s3.processed;
+        if (d.total) this.s3.total = d.total;
+        if (this.s3.total > 0) {
+          this.s3.progress = Math.round(this.s3.processed / this.s3.total * 100);
+        }
+        this.s3.statusLabel = this.s3.processed + '/' + this.s3.total;
+      }
+      if (e === 's3_fim') {
+        this.s3.status = 'completed';
+        this.s3.statusLabel = 'Concluido';
+        this.s3.progress = 100;
+        this.s3.entidades = d.entidades || 0;
+        this.s3.arquivo = d.arquivo || '';
+      }
+
+      // --- Erros genericos ---
+      if (e.includes('error') || e.includes('erro')) {
+        if (e.startsWith('s1') || e === 'coleta_erro') {
+          this.s1.status = 'error';
+          this.s1.statusLabel = 'Erro';
+        } else if (e.startsWith('s2')) {
+          this.s2.status = 'error';
+          this.s2.statusLabel = 'Erro';
+        } else if (e.startsWith('s3')) {
+          this.s3.status = 'error';
+          this.s3.statusLabel = 'Erro';
+        }
+      }
+    },
+
+    // ====== Filtro de eventos no log ======
+    filteredEvents() {
+      if (this.showDetails) return this.events;
+      // Esconde det_ok (muito verboso) quando toggle desligado
+      return this.events.filter(evt => {
+        const e = evt.event || '';
+        return e !== 'det_ok' && e !== 'det_cache';
+      });
+    },
+
+    // ====== Formatters ======
+    formatElapsedFinal() {
+      if (!this.pipelineElapsed) return this.elapsedDisplay;
+      const s = parseFloat(this.pipelineElapsed);
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+    },
+
+    formatTime(ts) {
+      if (!ts) return '';
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString('pt-BR');
+    },
+
+    formatData(data) {
+      if (!data) return '';
+      if (typeof data === 'string') return data;
+      const msg = data.message || '';
+      const parts = [];
+      if (msg) parts.push(msg);
+      for (const [k, v] of Object.entries(data)) {
+        if (k === 'message' || k === 'tb' || k === '_idx' || k === 'result') continue;
+        if (typeof v === 'number') parts.push(`${k}=${v}`);
+        if (typeof v === 'string' && v.length < 80) parts.push(`${k}=${v}`);
+      }
+      return parts.join(' | ');
+    },
+
+    evtRowClass(evt) {
+      const e = evt.event || '';
+      if (e.includes('error') || e.includes('erro')) return 'text-red-400';
+      if (e.includes('fim') || e.includes('done')) return 'text-emerald-400';
+      if (e.includes('inicio') || e.includes('start')) return 'text-blue-400';
+      if (e === 'det_ok') return 'text-gray-600';
+      return 'text-gray-500';
+    },
+
+    evtDotClass(evt) {
+      const e = evt.event || '';
+      if (e.includes('error') || e.includes('erro')) return 'bg-red-400';
+      if (e.includes('fim') || e.includes('done')) return 'bg-emerald-400';
+      if (e.includes('inicio') || e.includes('start')) return 'bg-blue-400';
+      if (e === 'det_ok') return 'bg-gray-700';
+      if (e === 'ind_done') return 'bg-purple-400';
+      return 'bg-gray-600';
+    },
+  };
+}
+
+</script>
+{% endblock %}

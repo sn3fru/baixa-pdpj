@@ -1,0 +1,57 @@
+# =============================================================================
+# DEVEDOR360 v2 - GitIgnore
+# =============================================================================
+
+# --- Credenciais e tokens ---
+.env
+
+# --- Outputs do pipeline (dados baixados) ---
+outputs/
+json_outputs/
+nomes/
+
+# --- Cache de execucao ---
+selic_cache.json
+cache_processos_completos.json
+casos_gigantes.json
+filiais_inexistentes.json
+processos_404.json
+log_erros_detalhado.json
+*.cache
+
+# --- Excels de entrada/saida (dados reais) ---
+entrada_*.xlsx
+entrada_*.xls
+saida_*.xlsx
+resultados_*.xlsx
+resumo_*.xlsx
+processos_*.xlsx
+visao_devedor_*.xlsx
+_temp_upload*
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Logs ---
+*.log

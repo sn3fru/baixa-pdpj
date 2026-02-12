@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Individuos{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h2 class="text-2xl font-bold">Individuos</h2>
+    <p class="text-gray-400 text-sm mt-1">Pessoas e empresas processadas no S1</p>
+  </div>
+  <div class="flex gap-2">
+    <button onclick="exportTable('xlsx')" class="text-xs px-3 py-1.5 bg-emerald-700 text-white rounded hover:bg-emerald-600 transition">Exportar Excel</button>
+    <button onclick="exportTable('csv')" class="text-xs px-3 py-1.5 bg-gray-700 text-gray-200 rounded hover:bg-gray-600 transition">Exportar CSV</button>
+  </div>
+</div>
+
+<div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+  <div id="individuos-table"></div>
+  <p id="individuos-msg" class="text-gray-600 text-sm">Carregando dados...</p>
+</div>
+
+<!-- Detalhes do individuo (modal) -->
+<div id="detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60" onclick="if(event.target===this)closeDetail()">
+  <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-3xl max-h-[80vh] overflow-y-auto p-6">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="text-lg font-bold" id="detail-title">Detalhes</h3>
+      <button onclick="closeDetail()" class="text-gray-500 hover:text-gray-300 text-xl">&times;</button>
+    </div>
+    <div id="detail-content" class="text-sm text-gray-400"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let tabulatorInstance = null;
+
+async function loadIndividuos() {
+  const msg = document.getElementById('individuos-msg');
+  try {
+    const res = await fetch('/api/individuos');
+    const data = await res.json();
+    if (!data.length) { msg.textContent = 'Nenhum individuo encontrado. Execute o pipeline S1 primeiro.'; return; }
+    msg.textContent = '';
+
+    const cols = [
+      {title: "ID", field: "id", headerFilter: "input", sorter: "string", width: 100, frozen: true},
+      {title: "Nome", field: "nome", headerFilter: "input", sorter: "string", minWidth: 180},
+      {title: "Documento", field: "documento_normalizado", headerFilter: "input", sorter: "string", width: 160},
+      {title: "Tipo", field: "tipo_documento", headerFilter: "input", sorter: "string", width: 80},
+      {title: "Processos", field: "total_processos", headerFilter: "number", sorter: "number", width: 100, hozAlign: "right"},
+      {title: "Pages", field: "_pages", headerFilter: "number", sorter: "number", width: 80, hozAlign: "right"},
+      {title: "Detalhes", field: "_detalhes", headerFilter: "number", sorter: "number", width: 90, hozAlign: "right"},
+      {title: "Origens", field: "origens", headerFilter: "input", sorter: "string", width: 140,
+        formatter: function(cell) {
+          const v = cell.getValue();
+          if (!v || typeof v !== 'object') return String(v || '');
+          return Object.entries(v).filter(([k,n])=>n>0).map(([k,n])=>`${k}(${n})`).join(', ');
+        }
+      },
+      {title: "", width: 60, hozAlign: "center", headerSort: false,
+        formatter: function() { return '<button class="text-blue-400 hover:text-blue-300 text-xs">Ver</button>'; },
+        cellClick: function(e, cell) { showDetail(cell.getRow().getData().id); }
+      },
+    ];
+
+    tabulatorInstance = new Tabulator('#individuos-table', {
+      data: data,
+      columns: cols,
+      layout: "fitDataFill",
+      height: "600px",
+      pagination: true,
+      paginationSize: 50,
+      movableColumns: true,
+      placeholder: "Nenhum dado",
+      initialSort: [{column: "total_processos", dir: "desc"}],
+    });
+  } catch(e) { msg.textContent = 'Erro ao carregar: ' + e.message; }
+}
+
+function exportTable(type) {
+  if (!tabulatorInstance) return;
+  if (type === 'xlsx') tabulatorInstance.download("xlsx", "individuos.xlsx", {sheetName: "Individuos"});
+  if (type === 'csv') tabulatorInstance.download("csv", "individuos.csv");
+}
+
+async function showDetail(id) {
+  document.getElementById('detail-title').textContent = 'Individuo: ' + id;
+  const content = document.getElementById('detail-content');
+  content.innerHTML = '<p class="text-gray-600">Carregando...</p>';
+  document.getElementById('detail-modal').classList.remove('hidden');
+
+  try {
+    const res = await fetch('/api/individuos/' + encodeURIComponent(id));
+    const data = await res.json();
+    if (data.error) { content.innerHTML = '<p class="text-red-400">' + data.error + '</p>'; return; }
+
+    let html = '<div class="space-y-4">';
+    // Metadata
+    html += '<div class="bg-gray-800/50 rounded p-3"><h4 class="text-xs font-bold text-gray-400 mb-2">Metadata</h4>';
+    html += '<pre class="text-xs text-gray-300 overflow-x-auto">' + JSON.stringify(data.metadata, null, 2) + '</pre></div>';
+    // Processos
+    const pCount = Object.keys(data.processos_unicos || {}).length;
+    html += '<p class="text-gray-400">Processos unicos: <span class="text-white font-bold">' + pCount + '</span></p>';
+    // Arquivos
+    html += '<div class="bg-gray-800/50 rounded p-3"><h4 class="text-xs font-bold text-gray-400 mb-2">Arquivos (' + data.arquivos.length + ')</h4>';
+    html += '<div class="max-h-48 overflow-y-auto text-xs space-y-0.5">';
+    for (const a of data.arquivos) {
+      html += '<div class="flex justify-between"><span class="text-gray-300">' + a.path + '</span><span class="text-gray-600">' + formatBytes(a.size) + '</span></div>';
+    }
+    html += '</div></div>';
+    html += '</div>';
+    content.innerHTML = html;
+  } catch(e) { content.innerHTML = '<p class="text-red-400">Erro: ' + e.message + '</p>'; }
+}
+
+function closeDetail() { document.getElementById('detail-modal').classList.add('hidden'); }
+
+function formatBytes(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1024*1024) return (b/1024).toFixed(1) + ' KB';
+  return (b/1024/1024).toFixed(1) + ' MB';
+}
+
+loadIndividuos();
+</script>
+{% endblock %}
