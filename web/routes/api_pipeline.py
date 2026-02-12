@@ -37,14 +37,24 @@ async def executar_pipeline(body: dict = None):
                     setattr(cfg, k, v)
 
             def callback(evt, data=None, extra=None):
-                payload = {}
-                if isinstance(data, dict):
+                # Pipeline._emit envia:
+                #  - Para eventos de step: cb("s1", "coleta_inicio", {dados})
+                #    => evt="s1", data="coleta_inicio", extra={dados}
+                #  - Para eventos globais: cb("pipeline", "pipeline_fim", {dados})
+                #    => evt="pipeline", data="pipeline_fim", extra={dados}
+                # Queremos que o event_name seja o sub-evento (ex: "coleta_inicio")
+                if isinstance(data, str):
+                    event_name = data
+                    payload = extra if isinstance(extra, dict) else {}
+                elif isinstance(data, dict):
+                    event_name = evt
                     payload = data
-                elif isinstance(data, str):
-                    payload = {"message": data}
-                if extra and isinstance(extra, dict):
-                    payload.update(extra)
-                run.add_event(evt, payload)
+                    if extra and isinstance(extra, dict):
+                        payload.update(extra)
+                else:
+                    event_name = evt
+                    payload = {}
+                run.add_event(event_name, payload)
 
             p = Pipeline(cfg, progress_callback=callback)
             result = p.executar(steps=steps)

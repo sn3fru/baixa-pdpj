@@ -685,6 +685,135 @@ async def get_stats():
     return stats
 
 
+@router.get("/stats/charts")
+async def get_stats_charts():
+    """Retorna dados agregados para graficos BI no resumo do pipeline.
+    Usado pelo frontend para renderizar histogramas e distribuicoes."""
+    cfg = Config.from_env()
+    output_dir = cfg.output_dir
+    result = {
+        "tribunal": [],           # [{name, value}]
+        "classe": [],             # [{name, value}]
+        "status": [],             # [{name, value}] (ativos vs extintos)
+        "valor_distribuicao": [], # [{faixa, count}]
+        "idade_distribuicao": [], # [{faixa, count}]
+        "orgao": [],              # [{name, value}] top 10
+        "origens": [],            # [{name, value}]
+    }
+
+    filepath_s2 = _find_latest_file(output_dir, "saida_processos_consolidados_*.xlsx")
+    if not filepath_s2:
+        return result
+
+    try:
+        df = _df_cache.get(filepath_s2)
+    except Exception:
+        return result
+
+    if df.empty:
+        return result
+
+    # --- Tribunal ---
+    if "Tribunal" in df.columns:
+        counts = df["Tribunal"].value_counts().head(15)
+        result["tribunal"] = [{"name": str(k), "value": int(v)}
+                              for k, v in counts.items() if str(k).strip()]
+
+    # --- Classe ---
+    if "Classe" in df.columns:
+        counts = df["Classe"].value_counts().head(10)
+        result["classe"] = [{"name": str(k)[:40], "value": int(v)}
+                            for k, v in counts.items() if str(k).strip()]
+
+    # --- Status (Ativos vs Extintos) ---
+    if "Flag Extinto" in df.columns:
+        ext = df["Flag Extinto"].astype(str)
+        ativos = int((ext == "0").sum())
+        extintos = int((ext == "1").sum())
+        outros = len(df) - ativos - extintos
+        result["status"] = [{"name": "Ativos", "value": ativos}]
+        if extintos > 0:
+            result["status"].append({"name": "Extintos", "value": extintos})
+        if outros > 0:
+            result["status"].append({"name": "Outros", "value": outros})
+
+    # --- Distribuicao de Valor ---
+    if "Valor Acao" in df.columns:
+        vals = pd.to_numeric(df["Valor Acao"], errors="coerce").dropna()
+        if len(vals) > 0:
+            faixas = [
+                ("Sem valor", 0, 0),
+                ("< R$ 1k", 0.01, 1_000),
+                ("R$ 1k - 10k", 1_000, 10_000),
+                ("R$ 10k - 50k", 10_000, 50_000),
+                ("R$ 50k - 100k", 50_000, 100_000),
+                ("R$ 100k - 500k", 100_000, 500_000),
+                ("R$ 500k - 1M", 500_000, 1_000_000),
+                ("> R$ 1M", 1_000_000, float("inf")),
+            ]
+            # Conta "Sem valor" como processos onde valor é 0 ou ausente
+            total_com_valor = len(df["Valor Acao"].dropna())
+            sem_valor = len(df) - total_com_valor + int((vals == 0).sum())
+            dist = []
+            if sem_valor > 0:
+                dist.append({"faixa": "Sem valor", "count": sem_valor})
+            for label, lo, hi in faixas[1:]:
+                if hi == float("inf"):
+                    c = int((vals >= lo).sum())
+                else:
+                    c = int(((vals >= lo) & (vals < hi)).sum())
+                if c > 0:
+                    dist.append({"faixa": label, "count": c})
+            result["valor_distribuicao"] = dist
+
+    # --- Distribuicao de Idade (anos desde ajuizamento) ---
+    if "Data Ajuizamento" in df.columns:
+        try:
+            datas = pd.to_datetime(df["Data Ajuizamento"], errors="coerce", dayfirst=True)
+            datas = datas.dropna()
+            if len(datas) > 0:
+                hoje = pd.Timestamp.now()
+                idades_anos = ((hoje - datas).dt.days / 365.25).astype(int)
+                faixas_idade = [
+                    ("< 1 ano", 0, 1),
+                    ("1-2 anos", 1, 2),
+                    ("2-5 anos", 2, 5),
+                    ("5-10 anos", 5, 10),
+                    ("10-20 anos", 10, 20),
+                    ("20-30 anos", 20, 30),
+                    ("> 30 anos", 30, 999),
+                ]
+                dist = []
+                for label, lo, hi in faixas_idade:
+                    c = int(((idades_anos >= lo) & (idades_anos < hi)).sum())
+                    if c > 0:
+                        dist.append({"faixa": label, "count": c})
+                result["idade_distribuicao"] = dist
+        except Exception:
+            pass
+
+    # --- Orgao Julgador (top 10) ---
+    if "Orgao Julgador" in df.columns:
+        counts = df["Orgao Julgador"].value_counts().head(10)
+        result["orgao"] = [{"name": str(k)[:50], "value": int(v)}
+                           for k, v in counts.items() if str(k).strip()]
+
+    # --- Origens ---
+    if "Origens" in df.columns:
+        ori_doc = int(df["Origens"].str.contains("por_documento", na=False).sum())
+        ori_nome = int(df["Origens"].str.contains("por_nome", na=False).sum())
+        ori_filial = int(df["Origens"].str.contains("por_filial", na=False).sum())
+        result["origens"] = []
+        if ori_doc > 0:
+            result["origens"].append({"name": "Por Documento", "value": ori_doc})
+        if ori_nome > 0:
+            result["origens"].append({"name": "Por Nome", "value": ori_nome})
+        if ori_filial > 0:
+            result["origens"].append({"name": "Por Filial", "value": ori_filial})
+
+    return result
+
+
 # ============================================================================
 # Arquivos (file browser)
 # ============================================================================
