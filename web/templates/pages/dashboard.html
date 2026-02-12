@@ -32,8 +32,8 @@
   </div>
 </div>
 
-<!-- KPI Cards (auto-refresh via HTMX) -->
-<div hx-get="/api/stats" hx-trigger="load, every 15s" hx-swap="innerHTML" id="stats-container">
+<!-- KPI Cards (auto-refresh via JS) -->
+<div id="stats-container">
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
     <div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
       <p class="text-xs text-gray-500 uppercase tracking-wider">Individuos</p>
@@ -170,5 +170,7 @@ function kpiCard(label, value, color) {
 }
 
 loadDashboard();
+// Auto-refresh a cada 15s
+setInterval(loadDashboard, 15000);
 </script>
 {% endblock %}
