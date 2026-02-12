@@ -179,15 +179,8 @@ class OrganizadorProcessos:
 
         # ---- Homonimos: verifica se precisa filtrar ----
         processos_permitidos = self._resolver_homonimos(ind_dir)
-        # processos_permitidos == None  ->  nao tem homonimos, processa tudo
-        # processos_permitidos == set() ->  pendente (nao resolvido), PULA
-        # processos_permitidos == set(...) ->  resolvido, filtra
-
-        if processos_permitidos is not None and len(processos_permitidos) == 0:
-            if self.cfg.debug:
-                print(f"[S2] {id_ind}: homonimos pendentes, pulando")
-            self._emit("s2_homonimo_pendente", {"id": id_ind, "nome": nome})
-            return []
+        # processos_permitidos == None       ->  processa tudo (sem homonimos OU pendente)
+        # processos_permitidos == set({...}) ->  resolvido, filtra apenas selecionados
 
         # Le processos_unicos.json para origens
         pu = self._ler_proc_unicos(ind_dir)
@@ -248,9 +241,12 @@ class OrganizadorProcessos:
     def _resolver_homonimos(ind_dir: str):
         """
         Le homonimos.json e retorna:
-          None        -> nao existe (processa tudo normalmente)
-          set()       -> existe pendente (pula este individuo)
+          None        -> nao existe OU pendente (processa TUDO)
           set({...})  -> resolvido (filtra apenas processos dos docs selecionados)
+
+        Quando homonimos nao foram resolvidos, baixamos TODOS os processos
+        de todos os documentos encontrados. O analista pode refinar depois
+        usando a tela de homonimos e re-executando S2.
         """
         hom_path = os.path.join(ind_dir, "homonimos.json")
         if not os.path.isfile(hom_path):
@@ -268,9 +264,10 @@ class OrganizadorProcessos:
         if status == "unico":
             return None
 
-        # Se pendente (nao resolvido pelo analista), pula
+        # Se pendente (nao resolvido pelo analista), processa TUDO
+        # (nao pula — baixa todos os homonimos para o analista refinar depois)
         if status == "pendente":
-            return set()
+            return None
 
         # Se resolvido, retorna apenas processos dos documentos selecionados
         docs = hom.get("documentos", {})

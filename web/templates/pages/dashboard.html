@@ -54,17 +54,45 @@
   </div>
 </div>
 
-<!-- Charts -->
-<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-  <!-- Venn: origens -->
-  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
-    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Origens dos Processos</h3>
-    <div id="chart-origens" style="height:300px"></div>
+<!-- BI Charts -->
+<div id="bi-charts-section">
+  <div class="flex items-center justify-between mb-4">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">Analise dos Processos</h3>
+    <div id="bi-loading" class="flex items-center gap-2 text-xs text-gray-500">
+      <div class="animate-spin h-3 w-3 border border-gray-500 border-t-transparent rounded-full"></div>
+      Carregando graficos...
+    </div>
   </div>
-  <!-- Pie: classificacao -->
-  <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
-    <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Classificacao</h3>
-    <div id="chart-classif" style="height:300px"></div>
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Tribunal -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Por Tribunal</h4>
+      <div id="dash-chart-tribunal" style="height:260px"></div>
+    </div>
+    <!-- Distribuicao de Valor -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Distribuicao de Valor</h4>
+      <div id="dash-chart-valor" style="height:260px"></div>
+    </div>
+    <!-- Idade dos Processos -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Idade dos Processos</h4>
+      <div id="dash-chart-idade" style="height:260px"></div>
+    </div>
+    <!-- Classe -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Classe Processual</h4>
+      <div id="dash-chart-classe" style="height:260px"></div>
+    </div>
+    <!-- Status + Origens (lado a lado) -->
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Status dos Processos</h4>
+      <div id="dash-chart-status" style="height:260px"></div>
+    </div>
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-5">
+      <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Origens de Busca</h4>
+      <div id="dash-chart-origens" style="height:260px"></div>
+    </div>
   </div>
 </div>
 
@@ -108,81 +136,175 @@
 
 {% block scripts %}
 <script>
-// Carrega stats e atualiza graficos
-async function loadDashboard() {
+const _dashCharts = {};
+
+// ========== KPI Cards ==========
+async function loadKPIs() {
   try {
     const res = await fetch('/api/stats');
     const s = await res.json();
-
-    // Atualiza KPI cards
     const c = document.getElementById('stats-container');
-    if (c) {
-      let homAlert = '';
-      if (s.homonimos_pendentes > 0) {
-        homAlert = `<div class="col-span-2 md:col-span-4 bg-amber-900/20 border border-amber-700/30 rounded-lg p-3 flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
-            <span class="text-sm text-amber-300 font-medium">${s.homonimos_pendentes} homonimo(s) pendente(s) de resolucao</span>
-            <span class="text-xs text-gray-500">— o S2 ira pular esses individuos ate serem resolvidos</span>
-          </div>
-          <a href="/homonimos" class="text-xs px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded transition font-medium">Resolver agora</a>
-        </div>`;
-      }
-      c.innerHTML = `
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          ${homAlert}
-          ${kpiCard('Individuos', s.individuos, 'blue')}
-          ${kpiCard('Processos', s.processos, 'emerald')}
-          ${kpiCard('Ativos', s.ativos, 'yellow')}
-          ${kpiCard('Devedores', s.devedores, 'purple')}
-        </div>`;
+    if (!c) return;
+
+    let homAlert = '';
+    if (s.homonimos_pendentes > 0) {
+      homAlert = `<div class="col-span-2 md:col-span-4 bg-amber-900/20 border border-amber-700/30 rounded-lg p-3 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span class="text-sm text-amber-300 font-medium">${s.homonimos_pendentes} homonimo(s) pendente(s)</span>
+          <span class="text-xs text-gray-500">— todos foram baixados, refine selecionando os documentos corretos</span>
+        </div>
+        <a href="/homonimos" class="text-xs px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded transition font-medium">Resolver</a>
+      </div>`;
     }
-
-    // Origens chart
-    const chartOri = echarts.init(document.getElementById('chart-origens'), 'dark');
-    chartOri.setOption({
-      backgroundColor: 'transparent',
-      tooltip: {trigger: 'item'},
-      series: [{
-        type: 'pie', radius: ['40%','70%'], center: ['50%','55%'],
-        label: {color: '#9ca3af'},
-        data: [
-          {value: s.origens.por_documento, name: 'Por Documento', itemStyle:{color:'#3b82f6'}},
-          {value: s.origens.por_nome, name: 'Por Nome', itemStyle:{color:'#10b981'}},
-          {value: s.origens.por_filial, name: 'Por Filial', itemStyle:{color:'#f59e0b'}},
-        ]
-      }]
-    });
-
-    // Classificacao chart
-    const chartCls = echarts.init(document.getElementById('chart-classif'), 'dark');
-    chartCls.setOption({
-      backgroundColor: 'transparent',
-      tooltip: {trigger: 'item'},
-      series: [{
-        type: 'pie', radius: ['40%','70%'], center: ['50%','55%'],
-        label: {color: '#9ca3af'},
-        data: [
-          {value: s.exec_fiscal, name: 'Exec. Fiscal', itemStyle:{color:'#eab308'}},
-          {value: s.ativos - s.exec_fiscal, name: 'Outros Ativos', itemStyle:{color:'#3b82f6'}},
-          {value: s.extintos, name: 'Extintos', itemStyle:{color:'#6b7280'}},
-        ]
-      }]
-    });
-
-    window.addEventListener('resize', () => { chartOri.resize(); chartCls.resize(); });
-  } catch(e) { console.warn('Dashboard load:', e); }
+    c.innerHTML = `
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        ${homAlert}
+        ${_kpi('Individuos', s.individuos, 'blue')}
+        ${_kpi('Processos', s.processos, 'emerald')}
+        ${_kpi('Ativos', s.ativos, 'yellow')}
+        ${_kpi('Extintos', s.extintos, 'red')}
+        ${_kpi('Exec. Fiscal', s.exec_fiscal, 'amber')}
+        ${_kpi('Devedores', s.devedores, 'purple')}
+        ${_kpi('Por Documento', (s.origens||{}).por_documento, 'cyan')}
+        ${_kpi('Por Nome', (s.origens||{}).por_nome, 'pink')}
+      </div>`;
+  } catch(e) { console.warn('KPI load:', e); }
 }
 
-function kpiCard(label, value, color) {
+function _kpi(label, value, color) {
   return `<div class="bg-gray-900 rounded-lg border border-gray-800 p-4">
     <p class="text-xs text-gray-500 uppercase tracking-wider">${label}</p>
-    <p class="text-3xl font-bold text-${color}-400 mt-1">${(value||0).toLocaleString()}</p>
+    <p class="text-3xl font-bold text-${color}-400 mt-1">${(value||0).toLocaleString('pt-BR')}</p>
   </div>`;
 }
 
-loadDashboard();
-// Auto-refresh a cada 15s
-setInterval(loadDashboard, 15000);
+// ========== BI Charts ==========
+async function loadBICharts() {
+  const loading = document.getElementById('bi-loading');
+  try {
+    const res = await fetch('/api/stats/charts');
+    const data = await res.json();
+
+    // Check if there's any data at all
+    const hasData = data.tribunal?.length || data.valor_distribuicao?.length || data.idade_distribuicao?.length;
+    if (!hasData) {
+      if (loading) loading.innerHTML = '<span class="text-xs text-gray-600">Sem dados. Execute o pipeline primeiro.</span>';
+      return;
+    }
+    if (loading) loading.style.display = 'none';
+
+    _hBar('dash-chart-tribunal', data.tribunal, '#60A5FA');
+    _vBar('dash-chart-valor', data.valor_distribuicao, 'faixa', 'count', '#F59E0B');
+    _vBar('dash-chart-idade', data.idade_distribuicao, 'faixa', 'count', '#A78BFA');
+    _hBar('dash-chart-classe', data.classe, '#34D399');
+    _donut('dash-chart-status', data.status, ['#34D399', '#EF4444', '#6B7280']);
+    _donut('dash-chart-origens', data.origens, ['#60A5FA', '#F59E0B', '#A78BFA']);
+  } catch(e) {
+    console.warn('Charts load:', e);
+    if (loading) loading.innerHTML = '<span class="text-xs text-red-400">Erro ao carregar graficos</span>';
+  }
+}
+
+// ========== Chart Helpers ==========
+const _darkOpts = {
+  textStyle: { color: '#9CA3AF', fontSize: 11 },
+};
+
+function _hBar(id, items, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<p class="text-xs text-gray-600 text-center pt-16">Sem dados</p>'; return; }
+  const chart = _getChart(id, el);
+  const names = items.map(i => i.name).reverse();
+  const values = items.map(i => i.value).reverse();
+  chart.setOption({
+    ..._darkOpts, backgroundColor: 'transparent',
+    grid: { left: '3%', right: '15%', top: 8, bottom: 8, containLabel: true },
+    xAxis: { type: 'value', show: false },
+    yAxis: { type: 'category', data: names,
+      axisLabel: { color: '#9CA3AF', fontSize: 10, width: 140, overflow: 'truncate' },
+      axisLine: { show: false }, axisTick: { show: false },
+    },
+    series: [{ type: 'bar', data: values, barMaxWidth: 20,
+      itemStyle: { color: color, borderRadius: [0,4,4,0] },
+      label: { show: true, position: 'right', color: '#D1D5DB', fontSize: 10,
+        formatter: (p) => p.value.toLocaleString('pt-BR') },
+    }],
+    tooltip: { trigger: 'axis', backgroundColor: '#1F2937', borderColor: '#374151',
+      textStyle: { color: '#E5E7EB', fontSize: 11 } },
+  });
+}
+
+function _vBar(id, items, faixaKey, countKey, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<p class="text-xs text-gray-600 text-center pt-16">Sem dados</p>'; return; }
+  const chart = _getChart(id, el);
+  chart.setOption({
+    ..._darkOpts, backgroundColor: 'transparent',
+    grid: { left: '5%', right: '3%', top: 15, bottom: '18%', containLabel: true },
+    xAxis: { type: 'category', data: items.map(i => i[faixaKey]),
+      axisLabel: { color: '#9CA3AF', fontSize: 9, rotate: 25 },
+      axisLine: { lineStyle: { color: '#374151' }}, axisTick: { show: false },
+    },
+    yAxis: { type: 'value', splitLine: { lineStyle: { color: '#1F2937' }},
+      axisLabel: { color: '#6B7280', fontSize: 9 },
+    },
+    series: [{ type: 'bar', data: items.map(i => i[countKey]), barMaxWidth: 32,
+      itemStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[
+        {offset: 0, color: color}, {offset: 1, color: color + '44'}
+      ]), borderRadius: [4,4,0,0] },
+      label: { show: true, position: 'top', color: '#D1D5DB', fontSize: 9 },
+    }],
+    tooltip: { trigger: 'axis', backgroundColor: '#1F2937', borderColor: '#374151',
+      textStyle: { color: '#E5E7EB', fontSize: 11 } },
+  });
+}
+
+function _donut(id, items, colors) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!items || !items.length) { el.innerHTML = '<p class="text-xs text-gray-600 text-center pt-16">Sem dados</p>'; return; }
+  const chart = _getChart(id, el);
+  chart.setOption({
+    ..._darkOpts, backgroundColor: 'transparent',
+    series: [{
+      type: 'pie', radius: ['40%', '72%'], center: ['50%', '52%'],
+      data: items.map((it, idx) => ({
+        name: it.name, value: it.value,
+        itemStyle: { color: colors[idx % colors.length] },
+      })),
+      label: { color: '#D1D5DB', fontSize: 11,
+        formatter: '{b}\n{c}' },
+      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' }},
+    }],
+    tooltip: { backgroundColor: '#1F2937', borderColor: '#374151',
+      textStyle: { color: '#E5E7EB', fontSize: 11 } },
+  });
+}
+
+function _getChart(id, el) {
+  if (_dashCharts[id]) {
+    return _dashCharts[id];
+  }
+  const chart = echarts.init(el, null, {renderer: 'canvas'});
+  _dashCharts[id] = chart;
+  return chart;
+}
+
+// ========== Init ==========
+loadKPIs();
+loadBICharts();
+
+// Auto-refresh KPIs a cada 15s
+setInterval(loadKPIs, 15000);
+// Refresh charts a cada 60s (mais pesado)
+setInterval(loadBICharts, 60000);
+
+// Resize
+window.addEventListener('resize', () => {
+  Object.values(_dashCharts).forEach(c => { try { c.resize(); } catch(e){} });
+});
 </script>
 {% endblock %}
