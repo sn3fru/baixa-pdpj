@@ -205,13 +205,17 @@ class PDPJClient:
         """
         Busca por nomeParte + outroNomeParte, merge e dedup.
         Retorna {'processos': [...], 'total': int, 'origens': {'nomeParte': int, 'outroNomeParte': int}}.
+        Replica chamada original: nomeParte/outroNomeParte + idClasse + tribunal.
         """
         resultados = {}
         origens = {}
 
         for campo in ("nomeParte", "outroNomeParte"):
-            params = {campo: nome, "siglaTribunal": self.tribunal,
+            params = {campo: nome, "tribunal": self.tribunal,
                       "tamanhoPagina": self.max_por_pagina}
+            # Aplica idClasse se configurado (original sempre usava 1116)
+            if self.id_classe:
+                params["idClasse"] = self.id_classe
             items = []
             pagina = 1
             search_after = None

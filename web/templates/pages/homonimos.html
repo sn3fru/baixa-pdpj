@@ -1,0 +1,420 @@
+{% extends "base.html" %}
+{% block title %}Homonimos{% endblock %}
+
+{% block content %}
+<div x-data="homonimoPage()" x-init="init()">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h2 class="text-2xl font-bold">Homonimos</h2>
+      <p class="text-gray-400 text-sm mt-1">
+        Quando buscamos por <strong class="text-gray-300">nome</strong>, diferentes pessoas (CPFs/CNPJs) podem aparecer com o mesmo nome.
+        Aqui o analista seleciona quais sao os devedores corretos antes do pipeline S2.
+      </p>
+    </div>
+    <div class="flex gap-3 items-center">
+      <span class="text-xs text-gray-500" x-text="'Total: ' + items.length + ' individuos com homonimos'"></span>
+      <button @click="loadData()" class="text-xs px-3 py-1.5 bg-gray-700 text-gray-200 rounded hover:bg-gray-600 transition">
+        Recarregar
+      </button>
+    </div>
+  </div>
+
+  <!-- Info banner -->
+  <div class="bg-amber-900/20 border border-amber-700/30 rounded-lg p-4 mb-6 text-sm">
+    <div class="flex gap-3">
+      <svg class="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+      <div>
+        <p class="text-amber-300 font-medium mb-1">Por que isso e importante?</p>
+        <p class="text-amber-200/70">
+          Ao buscar processos por <em>nome</em>, a API retorna todos os processos de qualquer pessoa com aquele nome.
+          Se "Joao da Silva" retorna processos de 3 CPFs diferentes, voce precisa indicar qual e o devedor correto.
+          <strong class="text-amber-200">Individuos nao resolvidos serao pulados no Step 2 (organizacao).</strong>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stats cards -->
+  <div class="grid grid-cols-3 gap-4 mb-6">
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-4 text-center">
+      <p class="text-2xl font-bold text-amber-400" x-text="stats.pendentes"></p>
+      <p class="text-xs text-gray-500">Pendentes</p>
+    </div>
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-4 text-center">
+      <p class="text-2xl font-bold text-emerald-400" x-text="stats.resolvidos"></p>
+      <p class="text-xs text-gray-500">Resolvidos</p>
+    </div>
+    <div class="bg-gray-900 rounded-lg border border-gray-800 p-4 text-center">
+      <p class="text-2xl font-bold text-blue-400" x-text="stats.unicos"></p>
+      <p class="text-xs text-gray-500">Sem ambiguidade</p>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div x-show="loading" class="text-center py-12">
+    <div class="inline-block w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+    <p class="text-gray-500 text-sm mt-3">Carregando homonimos...</p>
+  </div>
+
+  <!-- Empty state -->
+  <div x-show="!loading && items.length === 0" class="text-center py-12 text-gray-600">
+    <svg class="w-12 h-12 mx-auto mb-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+    <p>Nenhum homonimo encontrado.</p>
+    <p class="text-xs mt-1">Execute o pipeline S1 com busca por nome habilitada.</p>
+  </div>
+
+  <!-- Filter tabs -->
+  <div x-show="!loading && items.length > 0" class="flex gap-2 mb-4">
+    <button @click="filter = 'all'" :class="filter === 'all' ? 'bg-gray-700 text-white' : 'bg-gray-900 text-gray-500 hover:text-gray-300'" class="text-xs px-3 py-1.5 rounded-lg transition border border-gray-800">
+      Todos (<span x-text="items.length"></span>)
+    </button>
+    <button @click="filter = 'pendente'" :class="filter === 'pendente' ? 'bg-amber-700 text-white' : 'bg-gray-900 text-amber-500/60 hover:text-amber-400'" class="text-xs px-3 py-1.5 rounded-lg transition border border-gray-800">
+      Pendentes (<span x-text="stats.pendentes"></span>)
+    </button>
+    <button @click="filter = 'resolvido'" :class="filter === 'resolvido' ? 'bg-emerald-700 text-white' : 'bg-gray-900 text-emerald-500/60 hover:text-emerald-400'" class="text-xs px-3 py-1.5 rounded-lg transition border border-gray-800">
+      Resolvidos (<span x-text="stats.resolvidos"></span>)
+    </button>
+    <button @click="filter = 'unico'" :class="filter === 'unico' ? 'bg-blue-700 text-white' : 'bg-gray-900 text-blue-500/60 hover:text-blue-400'" class="text-xs px-3 py-1.5 rounded-lg transition border border-gray-800">
+      Sem ambiguidade (<span x-text="stats.unicos"></span>)
+    </button>
+  </div>
+
+  <!-- List -->
+  <div x-show="!loading && items.length > 0" class="space-y-3">
+    <template x-for="item in filteredItems" :key="item.id">
+      <div class="bg-gray-900 rounded-lg border p-4 transition-all duration-300 cursor-pointer hover:border-gray-600"
+           :class="{
+             'border-amber-700/50': item.status === 'pendente',
+             'border-emerald-700/30': item.status === 'resolvido',
+             'border-gray-800': item.status === 'unico',
+           }"
+           @click="toggleExpand(item.id)">
+
+        <!-- Resumo -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-4">
+            <!-- Status badge -->
+            <span class="flex-shrink-0 w-2.5 h-2.5 rounded-full"
+                  :class="{
+                    'bg-amber-400 animate-pulse': item.status === 'pendente',
+                    'bg-emerald-400': item.status === 'resolvido',
+                    'bg-blue-400/50': item.status === 'unico',
+                  }"></span>
+            <div>
+              <p class="font-medium text-sm text-gray-200" x-text="item.nome || item.id"></p>
+              <div class="flex gap-3 mt-0.5">
+                <span class="text-xs text-gray-500" x-text="'ID: ' + item.id"></span>
+                <span class="text-xs text-gray-500" x-show="item.documento_input" x-text="'Doc: ' + item.documento_input"></span>
+                <span class="text-xs text-gray-500" x-text="item.total_processos_nome + ' processos por nome'"></span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                  :class="{
+                    'bg-amber-600/20 text-amber-400': item.status === 'pendente',
+                    'bg-emerald-600/20 text-emerald-400': item.status === 'resolvido',
+                    'bg-blue-600/20 text-blue-400': item.status === 'unico',
+                  }"
+                  x-text="item.status === 'pendente' ? item.total_documentos + ' docs (pendente)' :
+                          item.status === 'resolvido' ? 'Resolvido' : '1 doc (sem ambiguidade)'"></span>
+            <svg class="w-4 h-4 text-gray-600 transition-transform" :class="expanded === item.id && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+          </div>
+        </div>
+
+        <!-- Expanded detail -->
+        <div x-show="expanded === item.id" x-transition @click.stop class="mt-4 border-t border-gray-800 pt-4">
+          <div x-show="loadingDetail" class="text-center py-6">
+            <div class="inline-block w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+          <div x-show="!loadingDetail && detail">
+            <p class="text-xs text-gray-500 mb-3">
+              Busca por nome: "<span class="text-gray-300" x-text="detail?.homonimos?.nome_busca"></span>"
+              retornou <span class="text-gray-300 font-bold" x-text="detail?.homonimos?.total_processos_nome"></span> processos
+              distribuidos em <span class="text-gray-300 font-bold" x-text="detail?.homonimos?.total_documentos"></span> documentos distintos.
+            </p>
+
+            <!-- Cards de documentos -->
+            <div class="space-y-2">
+              <template x-for="(docInfo, docKey) in (detail?.homonimos?.documentos || {})" :key="docKey">
+                <div class="bg-gray-800/60 rounded-lg border p-3 transition-all duration-200"
+                     :class="docInfo.selecionado === true ? 'border-emerald-600 bg-emerald-900/10' :
+                             docInfo.selecionado === false ? 'border-red-800/30 opacity-50' :
+                             'border-gray-700 hover:border-gray-600'">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                      <!-- Checkbox -->
+                      <input type="checkbox"
+                             class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-emerald-500 focus:ring-emerald-500/50 cursor-pointer"
+                             :checked="selections[item.id]?.[docKey] === true"
+                             @change="toggleSelection(item.id, docKey, $event.target.checked)"
+                             @click.stop>
+                      <div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-sm font-mono font-medium" :class="docInfo.tipo === 'CPF' ? 'text-blue-400' : 'text-purple-400'" x-text="formatDoc(docKey, docInfo.tipo)"></span>
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-700 text-gray-400" x-text="docInfo.tipo"></span>
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-400" x-text="docInfo.qtd_processos + ' processos'"></span>
+                        </div>
+                        <div class="flex flex-wrap gap-1 mt-1">
+                          <template x-for="nome in (docInfo.nomes || []).slice(0, 5)" :key="nome">
+                            <span class="text-[10px] text-gray-500 bg-gray-800 rounded px-1.5 py-0.5" x-text="nome.substring(0, 40)"></span>
+                          </template>
+                          <span x-show="(docInfo.nomes || []).length > 5" class="text-[10px] text-gray-600" x-text="'+ ' + (docInfo.nomes.length - 5) + ' mais'"></span>
+                        </div>
+                      </div>
+                    </div>
+                    <!-- Amostra processos -->
+                    <div class="text-right">
+                      <button @click.stop="showProcessos(docInfo.processos)" class="text-[10px] text-gray-500 hover:text-gray-300 transition">
+                        Ver processos
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex items-center justify-between mt-4 pt-3 border-t border-gray-800">
+              <div class="flex items-center gap-2">
+                <button @click.stop="selectAll(item.id)" class="text-[10px] px-2 py-1 text-gray-500 hover:text-gray-300 transition">Selecionar todos</button>
+                <span class="text-gray-800">|</span>
+                <button @click.stop="deselectAll(item.id)" class="text-[10px] px-2 py-1 text-gray-500 hover:text-gray-300 transition">Limpar selecao</button>
+              </div>
+              <div class="flex items-center gap-3">
+                <span x-show="item.status === 'resolvido'" class="text-[10px] text-gray-600">
+                  Resolvido em: <span x-text="detail?.homonimos?.resolvido_em?.substring(0, 16)?.replace('T', ' ')"></span>
+                </span>
+                <button x-show="item.status === 'resolvido'" @click.stop="resetar(item.id)"
+                        class="text-xs px-3 py-1.5 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 transition">
+                  Resetar
+                </button>
+                <button @click.stop="salvar(item.id)"
+                        :disabled="!hasSelection(item.id)"
+                        class="text-xs px-4 py-1.5 rounded font-medium transition disabled:opacity-30 disabled:cursor-not-allowed"
+                        :class="hasSelection(item.id) ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-gray-800 text-gray-600'">
+                  Confirmar Selecao
+                </button>
+              </div>
+            </div>
+
+            <!-- Save feedback -->
+            <div x-show="saveMsg[item.id]" x-transition class="mt-2 text-xs p-2 rounded"
+                 :class="saveMsgType[item.id] === 'ok' ? 'bg-emerald-900/30 text-emerald-400' : 'bg-red-900/30 text-red-400'"
+                 x-text="saveMsg[item.id]"></div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- Modal processos -->
+  <div x-show="showProcModal" x-transition @click="showProcModal = false"
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div @click.stop class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-lg max-h-[70vh] overflow-y-auto p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-sm font-bold text-gray-300">Amostra de Processos</h3>
+        <button @click="showProcModal = false" class="text-gray-500 hover:text-gray-300 text-xl">&times;</button>
+      </div>
+      <div class="space-y-1">
+        <template x-for="proc in procModalData" :key="proc">
+          <div class="text-xs font-mono text-gray-400 bg-gray-800/50 rounded px-2 py-1" x-text="proc"></div>
+        </template>
+        <p x-show="procModalData.length === 0" class="text-gray-600 text-xs">Nenhum processo na amostra.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function homonimoPage() {
+  return {
+    items: [],
+    loading: true,
+    filter: 'all',
+    expanded: null,
+    detail: null,
+    loadingDetail: false,
+    selections: {},  // {id_ind: {doc: true/false}}
+    saveMsg: {},
+    saveMsgType: {},
+    showProcModal: false,
+    procModalData: [],
+    stats: { pendentes: 0, resolvidos: 0, unicos: 0 },
+
+    async init() {
+      await this.loadData();
+    },
+
+    async loadData() {
+      this.loading = true;
+      try {
+        const res = await fetch('/api/homonimos');
+        this.items = await res.json();
+        this.computeStats();
+        // Pre-fill selections for resolved items
+        for (const item of this.items) {
+          if (item.status === 'resolvido') {
+            // Will be loaded on expand
+          }
+        }
+      } catch (e) {
+        console.error('Erro ao carregar homonimos:', e);
+      }
+      this.loading = false;
+    },
+
+    computeStats() {
+      this.stats = { pendentes: 0, resolvidos: 0, unicos: 0 };
+      for (const item of this.items) {
+        if (item.status === 'pendente') this.stats.pendentes++;
+        else if (item.status === 'resolvido') this.stats.resolvidos++;
+        else this.stats.unicos++;
+      }
+    },
+
+    get filteredItems() {
+      if (this.filter === 'all') return this.items;
+      return this.items.filter(i => i.status === this.filter);
+    },
+
+    async toggleExpand(id) {
+      if (this.expanded === id) {
+        this.expanded = null;
+        this.detail = null;
+        return;
+      }
+      this.expanded = id;
+      this.loadingDetail = true;
+      this.detail = null;
+      try {
+        const res = await fetch('/api/homonimos/' + encodeURIComponent(id));
+        this.detail = await res.json();
+        // Init selections from saved data
+        if (!this.selections[id]) {
+          this.selections[id] = {};
+          const docs = this.detail?.homonimos?.documentos || {};
+          for (const [docKey, docInfo] of Object.entries(docs)) {
+            if (docInfo.selecionado === true) {
+              this.selections[id][docKey] = true;
+            } else if (docInfo.selecionado === false) {
+              this.selections[id][docKey] = false;
+            }
+            // null = not yet selected
+          }
+        }
+      } catch (e) {
+        console.error('Erro ao carregar detalhe:', e);
+      }
+      this.loadingDetail = false;
+    },
+
+    toggleSelection(id, docKey, checked) {
+      if (!this.selections[id]) this.selections[id] = {};
+      this.selections[id][docKey] = checked;
+    },
+
+    selectAll(id) {
+      if (!this.detail?.homonimos?.documentos) return;
+      this.selections[id] = {};
+      for (const docKey of Object.keys(this.detail.homonimos.documentos)) {
+        this.selections[id][docKey] = true;
+      }
+    },
+
+    deselectAll(id) {
+      this.selections[id] = {};
+    },
+
+    hasSelection(id) {
+      const sels = this.selections[id] || {};
+      return Object.values(sels).some(v => v === true);
+    },
+
+    async salvar(id) {
+      const sels = this.selections[id] || {};
+      // Build selecoes: include all docs (true for selected, false for not)
+      const docs = this.detail?.homonimos?.documentos || {};
+      const selecoes = {};
+      for (const docKey of Object.keys(docs)) {
+        selecoes[docKey] = sels[docKey] === true;
+      }
+
+      try {
+        const res = await fetch('/api/homonimos/' + encodeURIComponent(id) + '/resolver', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selecoes }),
+        });
+        const data = await res.json();
+        if (data.error) {
+          this.saveMsg[id] = data.error;
+          this.saveMsgType[id] = 'error';
+        } else {
+          this.saveMsg[id] = 'Homonimos resolvidos com sucesso!';
+          this.saveMsgType[id] = 'ok';
+          // Update local state
+          const item = this.items.find(i => i.id === id);
+          if (item) item.status = 'resolvido';
+          if (this.detail?.homonimos) {
+            this.detail.homonimos.status = 'resolvido';
+            for (const [dk, sel] of Object.entries(selecoes)) {
+              if (this.detail.homonimos.documentos[dk]) {
+                this.detail.homonimos.documentos[dk].selecionado = sel;
+              }
+            }
+          }
+          this.computeStats();
+          setTimeout(() => { this.saveMsg[id] = ''; }, 3000);
+        }
+      } catch (e) {
+        this.saveMsg[id] = 'Erro: ' + e.message;
+        this.saveMsgType[id] = 'error';
+      }
+    },
+
+    async resetar(id) {
+      try {
+        await fetch('/api/homonimos/' + encodeURIComponent(id) + '/resetar', { method: 'POST' });
+        this.selections[id] = {};
+        const item = this.items.find(i => i.id === id);
+        if (item) item.status = 'pendente';
+        if (this.detail?.homonimos) {
+          this.detail.homonimos.status = 'pendente';
+          for (const dk of Object.keys(this.detail.homonimos.documentos || {})) {
+            this.detail.homonimos.documentos[dk].selecionado = null;
+          }
+        }
+        this.computeStats();
+        this.saveMsg[id] = 'Selecoes resetadas.';
+        this.saveMsgType[id] = 'ok';
+        setTimeout(() => { this.saveMsg[id] = ''; }, 2000);
+      } catch (e) {
+        this.saveMsg[id] = 'Erro: ' + e.message;
+        this.saveMsgType[id] = 'error';
+      }
+    },
+
+    showProcessos(procs) {
+      this.procModalData = procs || [];
+      this.showProcModal = true;
+    },
+
+    formatDoc(doc, tipo) {
+      if (tipo === 'CPF' && doc.length === 11) {
+        return doc.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+      }
+      if (tipo === 'CNPJ' && doc.length === 14) {
+        return doc.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+      }
+      return doc;
+    },
+  };
+}
+</script>
+{% endblock %}

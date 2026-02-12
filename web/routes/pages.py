@@ -61,6 +61,13 @@ async def page_devedores(request: Request):
     })
 
 
+@router.get("/homonimos")
+async def page_homonimos(request: Request):
+    return templates.TemplateResponse("pages/homonimos.html", {
+        "request": request, "page": "homonimos",
+    })
+
+
 @router.get("/arquivos")
 async def page_arquivos(request: Request):
     return templates.TemplateResponse("pages/arquivos.html", {

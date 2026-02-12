@@ -177,6 +177,18 @@ class OrganizadorProcessos:
         tipo = meta.get("tipo_documento", "")
         raiz = obter_raiz_cnpj(doc) if tipo == "CNPJ" else (doc if tipo == "CPF" else "")
 
+        # ---- Homonimos: verifica se precisa filtrar ----
+        processos_permitidos = self._resolver_homonimos(ind_dir)
+        # processos_permitidos == None  ->  nao tem homonimos, processa tudo
+        # processos_permitidos == set() ->  pendente (nao resolvido), PULA
+        # processos_permitidos == set(...) ->  resolvido, filtra
+
+        if processos_permitidos is not None and len(processos_permitidos) == 0:
+            if self.cfg.debug:
+                print(f"[S2] {id_ind}: homonimos pendentes, pulando")
+            self._emit("s2_homonimo_pendente", {"id": id_ind, "nome": nome})
+            return []
+
         # Le processos_unicos.json para origens
         pu = self._ler_proc_unicos(ind_dir)
 
@@ -189,10 +201,15 @@ class OrganizadorProcessos:
                 try:
                     with open(fpath, "r", encoding="utf-8") as f:
                         data = json.load(f)
+                    np_val = data.get("numeroProcesso", "")
+
+                    # Filtra por homonimos se necessario
+                    if processos_permitidos is not None and np_val not in processos_permitidos:
+                        continue
+
                     recs = extrair_campos_processo(
                         data, doc_pasta=doc, raiz_pasta=raiz,
                         cache_manager=self.cache)
-                    np_val = data.get("numeroProcesso", "")
                     origens_str = ", ".join(pu.get(np_val, {}).get("origens", []))
                     for r in recs:
                         r["ID Individuo"] = id_ind
@@ -207,8 +224,13 @@ class OrganizadorProcessos:
             pages = self._coletar_pages(ind_dir)
             for page_data in pages:
                 for item in (page_data.get("content") or []):
-                    rec = extrair_campos_pagina(item, doc)
                     np_val = item.get("numeroProcesso", "")
+
+                    # Filtra por homonimos se necessario
+                    if processos_permitidos is not None and np_val not in processos_permitidos:
+                        continue
+
+                    rec = extrair_campos_pagina(item, doc)
                     origens_str = ", ".join(pu.get(np_val, {}).get("origens", []))
                     rec["ID Individuo"] = id_ind
                     rec["Nome Cliente"] = nome
@@ -217,6 +239,47 @@ class OrganizadorProcessos:
                     records.append(rec)
 
         return records
+
+    # ------------------------------------------------------------------
+    #  Homonimos
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolver_homonimos(ind_dir: str):
+        """
+        Le homonimos.json e retorna:
+          None        -> nao existe (processa tudo normalmente)
+          set()       -> existe pendente (pula este individuo)
+          set({...})  -> resolvido (filtra apenas processos dos docs selecionados)
+        """
+        hom_path = os.path.join(ind_dir, "homonimos.json")
+        if not os.path.isfile(hom_path):
+            return None
+
+        try:
+            with open(hom_path, "r", encoding="utf-8") as f:
+                hom = json.load(f)
+        except Exception:
+            return None
+
+        status = hom.get("status", "unico")
+
+        # Se so tem 1 documento, nao precisa filtrar
+        if status == "unico":
+            return None
+
+        # Se pendente (nao resolvido pelo analista), pula
+        if status == "pendente":
+            return set()
+
+        # Se resolvido, retorna apenas processos dos documentos selecionados
+        docs = hom.get("documentos", {})
+        permitidos = set()
+        for doc_norm, info in docs.items():
+            if info.get("selecionado") is True:
+                for proc in info.get("processos", []):
+                    permitidos.add(proc)
+        return permitidos
 
     # ------------------------------------------------------------------
     #  Deduplicacao (3 etapas, como original)

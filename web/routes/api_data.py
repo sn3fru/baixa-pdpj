@@ -265,10 +265,20 @@ async def list_individuos():
                 for fn in files:
                     if fn.startswith("page_") and fn.endswith(".json"):
                         n_pages += 1
-                    elif fn.endswith(".json") and fn not in ("metadata.json", "processos_unicos.json"):
+                    elif fn.endswith(".json") and fn not in ("metadata.json", "processos_unicos.json", "homonimos.json"):
                         n_dets += 1
             meta["_pages"] = n_pages
             meta["_detalhes"] = n_dets
+            # Homonimos info
+            hom_path = os.path.join(d, "homonimos.json")
+            if os.path.isfile(hom_path):
+                try:
+                    with open(hom_path, "r", encoding="utf-8") as f:
+                        hom = json.load(f)
+                    meta["_homonimos_status"] = hom.get("status", "unico")
+                    meta["_homonimos_docs"] = hom.get("total_documentos", 0)
+                except Exception:
+                    pass
             result.append(meta)
         except Exception:
             result.append({"id": name, "erro": "falha ao ler metadata"})
@@ -441,6 +451,167 @@ async def filter_devedores(
 
 
 # ============================================================================
+# Homonimos (resolucao de ambiguidades por nome)
+# ============================================================================
+
+@router.get("/homonimos")
+async def list_homonimos():
+    """Lista todos os individuos que possuem homonimos pendentes ou resolvidos.
+    Retorna apenas os que tem homonimos.json."""
+    cfg = Config.from_env()
+    output_dir = cfg.output_dir
+    if not os.path.isdir(output_dir):
+        return []
+
+    result = []
+    for name in sorted(os.listdir(output_dir)):
+        ind_dir = os.path.join(output_dir, name)
+        hom_path = os.path.join(ind_dir, "homonimos.json")
+        meta_path = os.path.join(ind_dir, "metadata.json")
+        if not os.path.isdir(ind_dir) or not os.path.isfile(hom_path):
+            continue
+        try:
+            with open(hom_path, "r", encoding="utf-8") as f:
+                hom = json.load(f)
+            meta = {}
+            if os.path.isfile(meta_path):
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            result.append({
+                "id": name,
+                "nome": meta.get("nome", hom.get("nome_busca", name)),
+                "documento_input": meta.get("documento", ""),
+                "tipo_documento": meta.get("tipo_documento", ""),
+                "status": hom.get("status", "unico"),
+                "total_documentos": hom.get("total_documentos", 0),
+                "total_processos_nome": hom.get("total_processos_nome", 0),
+            })
+        except Exception:
+            continue
+    return result
+
+
+@router.get("/homonimos/{id_ind}")
+async def get_homonimo(id_ind: str):
+    """Retorna dados completos de homonimos de um individuo."""
+    cfg = Config.from_env()
+    ind_dir = os.path.join(cfg.output_dir, id_ind)
+    hom_path = os.path.join(ind_dir, "homonimos.json")
+    meta_path = os.path.join(ind_dir, "metadata.json")
+
+    if not os.path.isfile(hom_path):
+        return {"error": "Homonimos nao encontrados para este individuo."}
+
+    with open(hom_path, "r", encoding="utf-8") as f:
+        hom = json.load(f)
+
+    meta = {}
+    if os.path.isfile(meta_path):
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+
+    return {
+        "id": id_ind,
+        "nome": meta.get("nome", hom.get("nome_busca", "")),
+        "documento_input": meta.get("documento", ""),
+        "tipo_documento": meta.get("tipo_documento", ""),
+        "homonimos": hom,
+    }
+
+
+@router.post("/homonimos/{id_ind}/resolver")
+async def resolver_homonimo(id_ind: str, body: dict = {}):
+    """Resolve homonimos: recebe dict de {documento: true/false}.
+    Marca os selecionados e atualiza status para 'resolvido'."""
+    cfg = Config.from_env()
+    ind_dir = os.path.join(cfg.output_dir, id_ind)
+    hom_path = os.path.join(ind_dir, "homonimos.json")
+
+    if not os.path.isfile(hom_path):
+        return {"error": "Homonimos nao encontrados."}
+
+    try:
+        with open(hom_path, "r", encoding="utf-8") as f:
+            hom = json.load(f)
+    except Exception as e:
+        return {"error": f"Erro ao ler homonimos: {e}"}
+
+    selecoes = body.get("selecoes", {})
+    if not selecoes:
+        return {"error": "Nenhuma selecao informada. Envie {selecoes: {doc: true/false}}"}
+
+    # Atualiza selecoes
+    docs = hom.get("documentos", {})
+    algum_selecionado = False
+    for doc_norm, selecionado in selecoes.items():
+        if doc_norm in docs:
+            docs[doc_norm]["selecionado"] = bool(selecionado)
+            if selecionado:
+                algum_selecionado = True
+
+    if not algum_selecionado:
+        return {"error": "Selecione pelo menos 1 documento."}
+
+    hom["status"] = "resolvido"
+    hom["documentos"] = docs
+    hom["resolvido_em"] = datetime.now().isoformat()
+
+    with open(hom_path, "w", encoding="utf-8") as f:
+        json.dump(hom, f, indent=2, ensure_ascii=False)
+
+    # Atualiza metadata tambem
+    meta_path = os.path.join(ind_dir, "metadata.json")
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            meta["homonimos_pendentes"] = False
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+    return {"status": "ok", "message": f"Homonimos resolvidos para {id_ind}."}
+
+
+@router.post("/homonimos/{id_ind}/resetar")
+async def resetar_homonimo(id_ind: str):
+    """Reseta a resolucao de homonimos (volta para 'pendente')."""
+    cfg = Config.from_env()
+    ind_dir = os.path.join(cfg.output_dir, id_ind)
+    hom_path = os.path.join(ind_dir, "homonimos.json")
+
+    if not os.path.isfile(hom_path):
+        return {"error": "Homonimos nao encontrados."}
+
+    with open(hom_path, "r", encoding="utf-8") as f:
+        hom = json.load(f)
+
+    # Reseta todas as selecoes
+    for doc_norm in hom.get("documentos", {}):
+        hom["documentos"][doc_norm]["selecionado"] = None
+    hom["status"] = "pendente"
+    hom.pop("resolvido_em", None)
+
+    with open(hom_path, "w", encoding="utf-8") as f:
+        json.dump(hom, f, indent=2, ensure_ascii=False)
+
+    # Atualiza metadata
+    meta_path = os.path.join(ind_dir, "metadata.json")
+    if os.path.isfile(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            meta["homonimos_pendentes"] = True
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+    return {"status": "ok", "message": "Selecoes resetadas."}
+
+
+# ============================================================================
 # Dashboard stats
 # ============================================================================
 
@@ -454,16 +625,30 @@ async def get_stats():
         "pages": 0, "devedores": 0,
         "exec_fiscal": 0, "ativos": 0, "extintos": 0,
         "origens": {"por_documento": 0, "por_nome": 0, "por_filial": 0},
+        "homonimos_pendentes": 0, "homonimos_resolvidos": 0,
     }
 
     if not os.path.isdir(output_dir):
         return stats
 
-    # Conta individuos
+    # Conta individuos e homonimos
     for name in os.listdir(output_dir):
         d = os.path.join(output_dir, name)
         if os.path.isdir(d) and os.path.isfile(os.path.join(d, "metadata.json")):
             stats["individuos"] += 1
+            # Verifica homonimos
+            hom_path = os.path.join(d, "homonimos.json")
+            if os.path.isfile(hom_path):
+                try:
+                    with open(hom_path, "r", encoding="utf-8") as f:
+                        hom = json.load(f)
+                    st = hom.get("status", "unico")
+                    if st == "pendente":
+                        stats["homonimos_pendentes"] += 1
+                    elif st == "resolvido":
+                        stats["homonimos_resolvidos"] += 1
+                except Exception:
+                    pass
 
     # Le S2 para processos
     filepath_s2 = _find_latest_file(output_dir, "saida_processos_consolidados_*.xlsx")

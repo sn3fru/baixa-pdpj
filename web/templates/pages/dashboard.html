@@ -117,8 +117,20 @@ async function loadDashboard() {
     // Atualiza KPI cards
     const c = document.getElementById('stats-container');
     if (c) {
+      let homAlert = '';
+      if (s.homonimos_pendentes > 0) {
+        homAlert = `<div class="col-span-2 md:col-span-4 bg-amber-900/20 border border-amber-700/30 rounded-lg p-3 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+            <span class="text-sm text-amber-300 font-medium">${s.homonimos_pendentes} homonimo(s) pendente(s) de resolucao</span>
+            <span class="text-xs text-gray-500">— o S2 ira pular esses individuos ate serem resolvidos</span>
+          </div>
+          <a href="/homonimos" class="text-xs px-3 py-1.5 bg-amber-700 hover:bg-amber-600 text-white rounded transition font-medium">Resolver agora</a>
+        </div>`;
+      }
       c.innerHTML = `
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          ${homAlert}
           ${kpiCard('Individuos', s.individuos, 'blue')}
           ${kpiCard('Processos', s.processos, 'emerald')}
           ${kpiCard('Ativos', s.ativos, 'yellow')}

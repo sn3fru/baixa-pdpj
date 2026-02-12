@@ -50,6 +50,15 @@ async function loadIndividuos() {
       {title: "Processos", field: "total_processos", headerFilter: "number", sorter: "number", width: 100, hozAlign: "right", headerTooltip: true, tooltip: true},
       {title: "Pages", field: "_pages", headerFilter: "number", sorter: "number", width: 80, hozAlign: "right", headerTooltip: true, tooltip: true},
       {title: "Detalhes", field: "_detalhes", headerFilter: "number", sorter: "number", width: 90, hozAlign: "right", headerTooltip: true, tooltip: true},
+      {title: "Homonimos", field: "_homonimos_status", headerFilter: "input", sorter: "string", width: 110, headerTooltip: true, tooltip: true,
+        formatter: function(cell) {
+          const v = cell.getValue();
+          if (!v) return '';
+          if (v === 'pendente') return '<span class="text-amber-400 font-medium">Pendente</span>';
+          if (v === 'resolvido') return '<span class="text-emerald-400">Resolvido</span>';
+          return '<span class="text-gray-500">OK</span>';
+        }
+      },
       {title: "Origens", field: "origens", headerFilter: "input", sorter: "string", width: 140, headerTooltip: true, tooltip: true,
         formatter: function(cell) {
           const v = cell.getValue();
