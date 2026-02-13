@@ -454,10 +454,67 @@ async def filter_devedores(
 # Homonimos (resolucao de ambiguidades por nome)
 # ============================================================================
 
+# ============================================================================
+# Homonimos - OTIMIZADO para performance com milhares de documentos
+# ============================================================================
+
+# Cache thread-safe para homonimos.json (evita reler arquivos grandes)
+class _HomCache:
+    """Cache de homonimos.json por individuo. Invalida por mtime."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._cache: dict = {}  # key -> (mtime, data)
+
+    def get(self, hom_path: str) -> dict | None:
+        if not os.path.isfile(hom_path):
+            return None
+        mtime = os.path.getmtime(hom_path)
+        with self._lock:
+            if hom_path in self._cache:
+                cached_mtime, cached_data = self._cache[hom_path]
+                if cached_mtime == mtime:
+                    return cached_data
+        # Parse fora do lock
+        with open(hom_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        with self._lock:
+            self._cache[hom_path] = (mtime, data)
+        return data
+
+    def invalidate(self, hom_path: str):
+        with self._lock:
+            self._cache.pop(hom_path, None)
+
+
+_hom_cache = _HomCache()
+
+
+def _read_hom_summary_fast(hom_path: str) -> dict | None:
+    """Le apenas os campos de resumo do homonimos.json SEM parsear o arquivo inteiro.
+    Le apenas os primeiros 2KB e usa regex para extrair status, total_documentos, etc.
+    Para arquivos de 10-20MB, isto e ~1000x mais rapido que json.load()."""
+    try:
+        with open(hom_path, "r", encoding="utf-8") as f:
+            header = f.read(2048)
+        status_m = re.search(r'"status"\s*:\s*"(\w+)"', header)
+        total_docs_m = re.search(r'"total_documentos"\s*:\s*(\d+)', header)
+        total_procs_m = re.search(r'"total_processos_nome"\s*:\s*(\d+)', header)
+        nome_m = re.search(r'"nome_busca"\s*:\s*"([^"]*)"', header)
+        return {
+            "status": status_m.group(1) if status_m else "unico",
+            "total_documentos": int(total_docs_m.group(1)) if total_docs_m else 0,
+            "total_processos_nome": int(total_procs_m.group(1)) if total_procs_m else 0,
+            "nome_busca": nome_m.group(1) if nome_m else "",
+        }
+    except Exception:
+        return None
+
+
 @router.get("/homonimos")
 async def list_homonimos():
-    """Lista todos os individuos que possuem homonimos pendentes ou resolvidos.
-    Retorna apenas os que tem homonimos.json."""
+    """Lista individuos com homonimos. RAPIDO: le apenas metadata.json (pequeno)
+    + extrai resumo de homonimos.json via leitura parcial (2KB, nao o arquivo inteiro)."""
     cfg = Config.from_env()
     output_dir = cfg.output_dir
     if not os.path.isdir(output_dir):
@@ -471,20 +528,25 @@ async def list_homonimos():
         if not os.path.isdir(ind_dir) or not os.path.isfile(hom_path):
             continue
         try:
-            with open(hom_path, "r", encoding="utf-8") as f:
-                hom = json.load(f)
+            # Le metadata (sempre pequeno, < 1KB)
             meta = {}
             if os.path.isfile(meta_path):
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
+
+            # Le APENAS resumo do homonimos.json (2KB, nao o arquivo inteiro)
+            hom_summary = _read_hom_summary_fast(hom_path)
+            if not hom_summary:
+                continue
+
             result.append({
                 "id": name,
-                "nome": meta.get("nome", hom.get("nome_busca", name)),
+                "nome": meta.get("nome", hom_summary.get("nome_busca", name)),
                 "documento_input": meta.get("documento", ""),
                 "tipo_documento": meta.get("tipo_documento", ""),
-                "status": hom.get("status", "unico"),
-                "total_documentos": hom.get("total_documentos", 0),
-                "total_processos_nome": hom.get("total_processos_nome", 0),
+                "status": hom_summary["status"],
+                "total_documentos": hom_summary["total_documentos"],
+                "total_processos_nome": hom_summary["total_processos_nome"],
             })
         except Exception:
             continue
@@ -492,8 +554,15 @@ async def list_homonimos():
 
 
 @router.get("/homonimos/{id_ind}")
-async def get_homonimo(id_ind: str):
-    """Retorna dados completos de homonimos de um individuo."""
+async def get_homonimo(
+    id_ind: str,
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=10, le=500),
+    search: str = Query("", alias="q"),
+):
+    """Retorna documentos de homonimos PAGINADOS e sem arrays de processos.
+    Cada doc retorna: documento, tipo, nomes, qtd_processos, selecionado.
+    Os arrays de processos sao removidos para performance (use /processos/{doc})."""
     cfg = Config.from_env()
     ind_dir = os.path.join(cfg.output_dir, id_ind)
     hom_path = os.path.join(ind_dir, "homonimos.json")
@@ -502,20 +571,81 @@ async def get_homonimo(id_ind: str):
     if not os.path.isfile(hom_path):
         return {"error": "Homonimos nao encontrados para este individuo."}
 
-    with open(hom_path, "r", encoding="utf-8") as f:
-        hom = json.load(f)
+    # Usa cache para evitar reler arquivos grandes
+    hom = _hom_cache.get(hom_path)
+    if hom is None:
+        return {"error": "Erro ao ler homonimos.json."}
 
     meta = {}
     if os.path.isfile(meta_path):
         with open(meta_path, "r", encoding="utf-8") as f:
             meta = json.load(f)
 
+    # Extrai documentos como lista ordenada por qtd_processos (desc)
+    docs_dict = hom.get("documentos", {})
+    doc_items = []
+    for doc_key, doc_info in docs_dict.items():
+        doc_items.append({
+            "doc": doc_key,
+            "tipo": doc_info.get("tipo", ""),
+            "nomes": (doc_info.get("nomes") or [])[:8],  # Max 8 nomes no resumo
+            "total_nomes": len(doc_info.get("nomes") or []),
+            "qtd_processos": doc_info.get("qtd_processos", 0),
+            "selecionado": doc_info.get("selecionado"),
+        })
+
+    # Ordena: mais processos primeiro
+    doc_items.sort(key=lambda x: x["qtd_processos"], reverse=True)
+
+    # Filtro de busca
+    if search.strip():
+        q = search.strip().lower()
+        doc_items = [d for d in doc_items if q in d["doc"].lower()
+                     or any(q in n.lower() for n in d.get("nomes", []))]
+
+    total_docs = len(doc_items)
+    total_pages = max(1, (total_docs + size - 1) // size)
+    page = min(page, total_pages)
+    start = (page - 1) * size
+    page_items = doc_items[start:start + size]
+
     return {
         "id": id_ind,
         "nome": meta.get("nome", hom.get("nome_busca", "")),
         "documento_input": meta.get("documento", ""),
         "tipo_documento": meta.get("tipo_documento", ""),
-        "homonimos": hom,
+        "status": hom.get("status", "unico"),
+        "nome_busca": hom.get("nome_busca", ""),
+        "total_processos_nome": hom.get("total_processos_nome", 0),
+        "total_documentos": hom.get("total_documentos", 0),
+        "resolvido_em": hom.get("resolvido_em"),
+        # Paginacao
+        "page": page,
+        "size": size,
+        "total_docs": total_docs,
+        "total_pages": total_pages,
+        "docs": page_items,
+    }
+
+
+@router.get("/homonimos/{id_ind}/processos/{doc_key}")
+async def get_homonimo_processos(id_ind: str, doc_key: str):
+    """Retorna lista de processos de um documento especifico.
+    Carregado sob demanda quando o usuario clica 'Ver processos'."""
+    cfg = Config.from_env()
+    hom_path = os.path.join(cfg.output_dir, id_ind, "homonimos.json")
+    if not os.path.isfile(hom_path):
+        return {"error": "Nao encontrado."}
+
+    hom = _hom_cache.get(hom_path)
+    if hom is None:
+        return {"error": "Erro ao ler arquivo."}
+
+    doc_info = hom.get("documentos", {}).get(doc_key, {})
+    return {
+        "doc": doc_key,
+        "processos": doc_info.get("processos", []),
+        "qtd_processos": doc_info.get("qtd_processos", 0),
     }
 
 
@@ -531,8 +661,9 @@ async def resolver_homonimo(id_ind: str, body: dict = {}):
         return {"error": "Homonimos nao encontrados."}
 
     try:
-        with open(hom_path, "r", encoding="utf-8") as f:
-            hom = json.load(f)
+        hom = _hom_cache.get(hom_path)
+        if hom is None:
+            return {"error": "Erro ao ler homonimos."}
     except Exception as e:
         return {"error": f"Erro ao ler homonimos: {e}"}
 
@@ -559,7 +690,9 @@ async def resolver_homonimo(id_ind: str, body: dict = {}):
     with open(hom_path, "w", encoding="utf-8") as f:
         json.dump(hom, f, indent=2, ensure_ascii=False)
 
-    # Atualiza metadata tambem
+    _hom_cache.invalidate(hom_path)
+
+    # Atualiza metadata
     meta_path = os.path.join(ind_dir, "metadata.json")
     if os.path.isfile(meta_path):
         try:
@@ -584,8 +717,9 @@ async def resetar_homonimo(id_ind: str):
     if not os.path.isfile(hom_path):
         return {"error": "Homonimos nao encontrados."}
 
-    with open(hom_path, "r", encoding="utf-8") as f:
-        hom = json.load(f)
+    hom = _hom_cache.get(hom_path)
+    if hom is None:
+        return {"error": "Erro ao ler arquivo."}
 
     # Reseta todas as selecoes
     for doc_norm in hom.get("documentos", {}):
@@ -595,6 +729,8 @@ async def resetar_homonimo(id_ind: str):
 
     with open(hom_path, "w", encoding="utf-8") as f:
         json.dump(hom, f, indent=2, ensure_ascii=False)
+
+    _hom_cache.invalidate(hom_path)
 
     # Atualiza metadata
     meta_path = os.path.join(ind_dir, "metadata.json")

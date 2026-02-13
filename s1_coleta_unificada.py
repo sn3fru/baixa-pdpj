@@ -532,14 +532,24 @@ class ColetaUnificada:
                 return [_ser(i) for i in o]
             return o
 
-        # Verifica se tem homonimos
+        # Verifica se tem homonimos (le apenas header para performance)
         has_homonimos = False
+        hom_status = None
+        hom_total_docs = 0
+        hom_total_procs = 0
         hom_path = os.path.join(ind_dir, "homonimos.json")
         if os.path.isfile(hom_path):
             try:
+                import re as _re
                 with open(hom_path, "r", encoding="utf-8") as f:
-                    hom_data = json.load(f)
-                has_homonimos = hom_data.get("status") == "pendente"
+                    header = f.read(2048)
+                st_m = _re.search(r'"status"\s*:\s*"(\w+)"', header)
+                td_m = _re.search(r'"total_documentos"\s*:\s*(\d+)', header)
+                tp_m = _re.search(r'"total_processos_nome"\s*:\s*(\d+)', header)
+                hom_status = st_m.group(1) if st_m else "unico"
+                hom_total_docs = int(td_m.group(1)) if td_m else 0
+                hom_total_procs = int(tp_m.group(1)) if tp_m else 0
+                has_homonimos = hom_status == "pendente"
             except Exception:
                 pass
 
@@ -551,6 +561,9 @@ class ColetaUnificada:
             "total_processos_unicos": total,
             "priorizacao": {"exec_fiscal": ef, "polo_ativo": pa, "outros": ou},
             "homonimos_pendentes": has_homonimos,
+            "homonimos_status": hom_status,
+            "homonimos_total_docs": hom_total_docs,
+            "homonimos_total_procs_nome": hom_total_procs,
             "timestamp": datetime.now().isoformat(),
         })
         self._write_json(os.path.join(ind_dir, "metadata.json"), meta)
