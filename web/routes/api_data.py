@@ -244,7 +244,9 @@ async def preview_input():
 
 @router.get("/individuos")
 async def list_individuos():
-    """Retorna lista de individuos processados."""
+    """Retorna lista de individuos processados.
+    OTIMIZADO: le apenas metadata.json (pequeno) + fast header de homonimos.
+    Nao faz os.walk (lento com muitos arquivos)."""
     cfg = Config.from_env()
     output_dir = cfg.output_dir
     if not os.path.isdir(output_dir):
@@ -259,26 +261,18 @@ async def list_individuos():
         try:
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
-            # Conta arquivos
-            n_pages = n_dets = 0
-            for root, _, files in os.walk(d):
-                for fn in files:
-                    if fn.startswith("page_") and fn.endswith(".json"):
-                        n_pages += 1
-                    elif fn.endswith(".json") and fn not in ("metadata.json", "processos_unicos.json", "homonimos.json"):
-                        n_dets += 1
-            meta["_pages"] = n_pages
-            meta["_detalhes"] = n_dets
-            # Homonimos info
+            # Conta arquivos de forma leve (listdir, nao os.walk)
+            pages_dir = os.path.join(d, "por_nome")
+            dets_dir = os.path.join(d, "detalhes")
+            meta["_pages"] = len([f for f in os.listdir(pages_dir) if f.startswith("page_")]) if os.path.isdir(pages_dir) else 0
+            meta["_detalhes"] = len(os.listdir(dets_dir)) if os.path.isdir(dets_dir) else 0
+            # Homonimos: fast header read (2KB, nao o arquivo inteiro)
             hom_path = os.path.join(d, "homonimos.json")
             if os.path.isfile(hom_path):
-                try:
-                    with open(hom_path, "r", encoding="utf-8") as f:
-                        hom = json.load(f)
-                    meta["_homonimos_status"] = hom.get("status", "unico")
-                    meta["_homonimos_docs"] = hom.get("total_documentos", 0)
-                except Exception:
-                    pass
+                hom_summary = _read_hom_summary_fast(hom_path)
+                if hom_summary:
+                    meta["_homonimos_status"] = hom_summary["status"]
+                    meta["_homonimos_docs"] = hom_summary["total_documentos"]
             result.append(meta)
         except Exception:
             result.append({"id": name, "erro": "falha ao ler metadata"})
@@ -753,7 +747,8 @@ async def resetar_homonimo(id_ind: str):
 
 @router.get("/stats")
 async def get_stats():
-    """Retorna estatisticas gerais para o dashboard."""
+    """Retorna estatisticas gerais para o dashboard.
+    OTIMIZADO: usa _read_hom_summary_fast (2KB) + operacoes vetorizadas."""
     cfg = Config.from_env()
     output_dir = cfg.output_dir
     stats = {
@@ -767,49 +762,43 @@ async def get_stats():
     if not os.path.isdir(output_dir):
         return stats
 
-    # Conta individuos e homonimos
+    # Conta individuos e homonimos (fast: metadata + 2KB header only)
     for name in os.listdir(output_dir):
         d = os.path.join(output_dir, name)
         if os.path.isdir(d) and os.path.isfile(os.path.join(d, "metadata.json")):
             stats["individuos"] += 1
-            # Verifica homonimos
             hom_path = os.path.join(d, "homonimos.json")
             if os.path.isfile(hom_path):
-                try:
-                    with open(hom_path, "r", encoding="utf-8") as f:
-                        hom = json.load(f)
-                    st = hom.get("status", "unico")
+                hom_summary = _read_hom_summary_fast(hom_path)
+                if hom_summary:
+                    st = hom_summary["status"]
                     if st == "pendente":
                         stats["homonimos_pendentes"] += 1
                     elif st == "resolvido":
                         stats["homonimos_resolvidos"] += 1
-                except Exception:
-                    pass
 
-    # Le S2 para processos
+    # Le S2 para processos (cached via _df_cache)
     filepath_s2 = _find_latest_file(output_dir, "saida_processos_consolidados_*.xlsx")
     if filepath_s2:
         try:
             df = _df_cache.get(filepath_s2)
             stats["processos"] = len(df)
             if "Flag Extinto" in df.columns:
-                stats["ativos"] = int((df["Flag Extinto"].astype(str) == "0").sum())
-                stats["extintos"] = int((df["Flag Extinto"].astype(str) == "1").sum())
+                ext = df["Flag Extinto"].astype(str)
+                stats["ativos"] = int((ext == "0").sum())
+                stats["extintos"] = int((ext == "1").sum())
             if "Classe" in df.columns:
                 stats["exec_fiscal"] = int(df["Classe"].str.contains("1116", na=False).sum())
+            # Origens: vectorizado (nao itera row por row)
             if "Origens" in df.columns:
-                for _, row in df.iterrows():
-                    ori = str(row.get("Origens", ""))
-                    if "por_documento" in ori:
-                        stats["origens"]["por_documento"] += 1
-                    if "por_nome" in ori:
-                        stats["origens"]["por_nome"] += 1
-                    if "por_filial" in ori:
-                        stats["origens"]["por_filial"] += 1
+                ori = df["Origens"].fillna("")
+                stats["origens"]["por_documento"] = int(ori.str.contains("por_documento").sum())
+                stats["origens"]["por_nome"] = int(ori.str.contains("por_nome").sum())
+                stats["origens"]["por_filial"] = int(ori.str.contains("por_filial").sum())
         except Exception:
             pass
 
-    # Le S3 para devedores
+    # Le S3 para devedores (cached via _df_cache)
     filepath_s3 = _find_latest_file(output_dir, "visao_devedor_*.xlsx")
     if filepath_s3:
         try:
@@ -1215,15 +1204,27 @@ async def download_zip():
     )
 
 
+# Cache para zip info (evita os.walk a cada request)
+_zip_info_cache = {"ts": 0, "data": None}
+
+
 @router.get("/download-zip/info")
 async def download_zip_info():
-    """Retorna informacoes sobre o que seria incluido no ZIP (tamanho, arquivos)."""
+    """Retorna informacoes sobre o que seria incluido no ZIP (tamanho, arquivos).
+    OTIMIZADO: resultado cacheado por 30s para evitar os.walk repetido."""
+    import time
+    now = time.time()
+    if _zip_info_cache["data"] and (now - _zip_info_cache["ts"]) < 30:
+        return _zip_info_cache["data"]
+
     cfg = Config.from_env()
     output_dir = os.path.abspath(cfg.output_dir)
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     if not os.path.isdir(output_dir):
-        return {"exists": False, "files": 0, "size_bytes": 0}
+        result = {"exists": False, "files": 0, "size_bytes": 0}
+        _zip_info_cache.update({"ts": now, "data": result})
+        return result
 
     total_files = 0
     total_size = 0
@@ -1231,19 +1232,27 @@ async def download_zip_info():
     for root, dirs, files in os.walk(output_dir):
         for fn in files:
             total_files += 1
-            total_size += os.path.getsize(os.path.join(root, fn))
+            try:
+                total_size += os.path.getsize(os.path.join(root, fn))
+            except OSError:
+                pass
 
     for pattern in ["saida_*.xlsx", "visao_devedor_*.xlsx", "entrada_*.xlsx"]:
         for f in glob.glob(os.path.join(project_root, pattern)):
             total_files += 1
-            total_size += os.path.getsize(f)
+            try:
+                total_size += os.path.getsize(f)
+            except OSError:
+                pass
 
-    return {
+    result = {
         "exists": True,
         "files": total_files,
         "size_bytes": total_size,
         "size_mb": round(total_size / 1024 / 1024, 1),
     }
+    _zip_info_cache.update({"ts": now, "data": result})
+    return result
 
 
 # ============================================================================
